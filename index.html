@@ -17,19 +17,17 @@
     body { height: 100vh; background: var(--bg-dark); color: var(--text); display: flex; overflow: hidden; font-size: var(--font-size, 15px); }
     body.high-contrast { --border: #ffffff; filter: contrast(1.15); }
     body.compact .message { padding: 6px 10px; margin-bottom: 2px; }
-    body.reduced-motion * { transition: none !important; animation: none !important; }
+    body.reduced-motion * { transition: none !important; }
 
-    /* Server Rail */
     .server-rail { width: 68px; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 12px; }
     .rail-btn { width: 46px; height: 46px; border-radius: 50%; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border); font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; position: relative; }
     .rail-btn:hover, .rail-btn.active { border-radius: 14px; background: var(--accent); color: #fff; }
     .rail-badge { position: absolute; top: -2px; right: -2px; background: #ef4444; color: #fff; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; font-weight: 800; }
 
-    /* Sidebar */
-    .sidebar { width: 260px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-    .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
-    .list-container { flex: 1; padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-    .list-card { padding: 10px 12px; border-radius: 8px; background: transparent; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: 0.15s; }
+    .sidebar { width: 270px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+    .sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
+    .list-container { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .list-card { padding: 10px 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
     .list-card:hover, .list-card.active { background: rgba(255,255,255,0.08); }
 
     .user-footer { padding: 10px 14px; background: var(--bg-card); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
@@ -39,37 +37,46 @@
     .status-dnd { background: #ef4444; }
     .status-invisible { background: #64748b; }
 
-    /* Main Chat Area */
     .main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
-    .chat-header { padding: 14px 24px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; }
-    .messages-box { flex: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
-    .message { max-width: 65%; padding: 10px 16px; border-radius: 14px; word-break: break-word; line-height: 1.4; }
+    .chat-header { padding: 12px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; gap: 10px; }
+    .messages-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    
+    .message { max-width: 68%; padding: 10px 14px; border-radius: 14px; word-break: break-word; line-height: 1.4; position: relative; }
     .message.sent { align-self: flex-end; background: var(--sent); color: #fff; }
     .message.received { align-self: flex-start; background: var(--rec); border: 1px solid var(--border); }
-    .msg-meta { font-size: 0.7rem; opacity: 0.75; margin-top: 4px; display: flex; justify-content: space-between; gap: 12px; }
+    .msg-actions { display: none; position: absolute; top: -12px; right: 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; gap: 4px; }
+    .message:hover .msg-actions { display: flex; }
+    .msg-act-btn { background: transparent; color: var(--text); padding: 2px 5px; font-size: 0.72rem; border-radius: 4px; }
+    .reply-quote { background: rgba(0,0,0,0.25); border-left: 3px solid var(--accent); padding: 4px 8px; border-radius: 4px; font-size: 0.78rem; margin-bottom: 6px; }
+    .msg-meta { font-size: 0.68rem; opacity: 0.75; margin-top: 4px; display: flex; justify-content: space-between; gap: 12px; }
 
-    .input-bar { padding: 16px 24px; background: var(--bg-panel); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
-    input, textarea, select { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 10px; outline: none; font-size: 0.9rem; }
-    button { background: var(--accent); color: #fff; font-weight: 700; border: none; padding: 8px 16px; border-radius: 10px; cursor: pointer; }
+    .typing-bar { padding: 4px 24px; font-size: 0.78rem; color: var(--accent); font-style: italic; height: 22px; }
+    .reply-banner { display: none; padding: 6px 24px; background: var(--bg-card); border-top: 1px solid var(--border); justify-content: space-between; align-items: center; font-size: 0.82rem; }
+    .input-bar { padding: 12px 20px; background: var(--bg-panel); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+    input, textarea, select { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 10px; outline: none; font-size: 0.88rem; }
+    button { background: var(--accent); color: #fff; font-weight: 700; border: none; padding: 8px 14px; border-radius: 10px; cursor: pointer; }
     button.btn-sec { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
     button.btn-danger { background: #ef4444; color: #fff; }
     button.btn-success { background: #10b981; color: #000; }
 
-    /* Full-Screen Discord Settings Overlay */
+    .poll-card { background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+    .poll-opt { background: var(--bg-card); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; font-size: 0.85rem; }
+
+    .media-area { display: none; padding: 12px; background: #000; flex-direction: column; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+    .soundboard { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+
     .settings-overlay { position: fixed; inset: 0; background: var(--bg-dark); display: none; z-index: 200; }
-    .settings-nav { width: 250px; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 24px 12px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
-    .settings-profile-box { background: var(--bg-card); padding: 12px; border-radius: 10px; margin-bottom: 12px; border: 1px solid var(--border); }
-    .settings-cat { font-size: 0.7rem; font-weight: 800; color: var(--muted); text-transform: uppercase; padding: 10px 10px 4px; letter-spacing: 0.5px; }
-    .settings-tab { text-align: left; background: transparent; color: var(--muted); padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; cursor: pointer; border: none; }
-    .settings-tab:hover, .settings-tab.active { background: rgba(255,255,255,0.08); color: var(--text); }
-    .settings-content { flex: 1; padding: 36px 48px; overflow-y: auto; max-width: 780px; }
+    .settings-nav { width: 250px; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 20px 12px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+    .settings-cat { font-size: 0.7rem; font-weight: 800; color: var(--muted); text-transform: uppercase; padding: 10px 10px 4px; }
+    .settings-tab { text-align: left; background: transparent; color: var(--muted); padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; cursor: pointer; }
+    .settings-tab.active { background: rgba(255,255,255,0.08); color: var(--text); }
+    .settings-content { flex: 1; padding: 32px 44px; overflow-y: auto; max-width: 780px; }
     .settings-section { display: none; flex-direction: column; gap: 16px; }
     .settings-section.active { display: flex; }
     .setting-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
     .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
     .setting-row:last-child { border-bottom: none; }
 
-    /* Call Modal */
     .modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 100; }
     .modal-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 420px; text-align: center; display: flex; flex-direction: column; gap: 14px; }
   </style>
@@ -89,48 +96,82 @@
   <div class="sidebar">
     <div class="sidebar-header">
       <span id="sidebarTitle">DIRECT MESSAGES</span>
-      <button class="btn-sec" id="sidebarActionBtn" style="padding: 4px 10px; font-size: 0.8rem;">+ Add Friend</button>
+      <div style="display:flex; gap:4px;">
+        <button class="btn-sec" id="quickJoinBtn" style="padding: 4px 8px; font-size: 0.75rem;">🔗 Join</button>
+        <button class="btn-sec" id="sidebarActionBtn" style="padding: 4px 8px; font-size: 0.75rem;">+ Add</button>
+      </div>
     </div>
     <div class="list-container" id="sidebarList"></div>
     <div class="user-footer">
-      <div>
-        <div style="font-weight: 700; font-size: 0.9rem;"><span class="status-pill status-online" id="footerStatusDot"></span><span id="footerDisplayName">User</span></div>
+      <div style="overflow:hidden;">
+        <div style="font-weight: 700; font-size: 0.88rem; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">
+          <span class="status-pill status-online" id="footerStatusDot"></span><span id="footerDisplayName">User</span>
+        </div>
+        <div style="font-size: 0.72rem; color: var(--muted); white-space:nowrap; text-overflow:ellipsis; overflow:hidden;" id="footerCustomActivity">Ready to chat</div>
         <div style="font-size: 0.72rem; color: var(--accent); font-family: monospace;">CODE: <span id="myCodeDisplay">----</span></div>
       </div>
-      <button class="btn-sec" id="copyCodeBtn" style="padding: 4px 8px; font-size: 0.75rem;">Copy</button>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <button class="btn-sec" id="copyCodeBtn" style="padding: 3px 8px; font-size: 0.72rem;">Copy Code</button>
+        <button class="btn-sec" id="copyInviteBtn" style="padding: 3px 8px; font-size: 0.72rem;">Invite Link</button>
+      </div>
     </div>
   </div>
 
   <!-- Main Chat Area -->
   <div class="main-area">
     <div class="chat-header">
-      <div style="display:flex; align-items:center; gap:10px;">
+      <div style="display:flex; align-items:center; gap:8px;">
         <span id="activeChatTitle">Select a Friend or Group</span>
-        <span id="offlineBanner" style="display:none; font-size:0.75rem; background:#eab308; color:#000; padding:2px 8px; border-radius:10px;">Offline Mode (Messages queued)</span>
+        <button class="btn-sec" id="friendNotesBtn" style="display:none; padding: 3px 8px; font-size: 0.75rem;">📝 Nickname & Notes</button>
       </div>
-      <button id="wsCallBtn" style="display:none;">📹 Start Video Call</button>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <input type="text" id="chatSearchInput" placeholder="🔍 Search messages..." style="padding: 5px 10px; font-size: 0.8rem; width: 170px;" />
+        <button id="wsCallBtn" style="display:none;">📹 Call</button>
+      </div>
     </div>
 
-    <div id="mediaArea" style="display: none; padding: 14px; background: #000; gap: 14px; justify-content: center; border-bottom: 1px solid var(--border);">
-      <video id="localVideo" autoplay muted playsinline style="width: 240px; border-radius: 10px;"></video>
-      <video id="remoteVideo" autoplay playsinline style="width: 240px; border-radius: 10px;"></video>
-      <button class="btn-danger" id="endCallBtn" style="align-self: flex-start;">End Call</button>
+    <!-- Active Call & Screen Share Area -->
+    <div id="mediaArea" class="media-area">
+      <div style="display:flex; gap:12px;">
+        <video id="localVideo" autoplay muted playsinline style="width: 220px; border-radius: 8px; background:#111;"></video>
+        <video id="remoteVideo" autoplay playsinline style="width: 220px; border-radius: 8px; background:#111;"></video>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button class="btn-sec" id="muteMicBtn">🎙️ Mute</button>
+        <button class="btn-sec" id="pttToggleBtn">Walkie PTT: OFF</button>
+        <button class="btn-sec" id="shareScreenBtn">🖥️ Share Screen (<span id="screenTimeLeft">10:00</span> left)</button>
+        <button class="btn-danger" id="endCallBtn">End Call</button>
+      </div>
+      <div class="soundboard">
+        <span style="font-size:0.75rem; color:#94a3b8; align-self:center;">Soundboard:</span>
+        <button class="btn-sec sb-btn" data-freq="523.25" style="padding:4px 8px; font-size:0.75rem;">🎺 Horn</button>
+        <button class="btn-sec sb-btn" data-freq="659.25" style="padding:4px 8px; font-size:0.75rem;">🔔 Ding</button>
+        <button class="btn-sec sb-btn" data-freq="392.00" style="padding:4px 8px; font-size:0.75rem;">🥁 Rimshot</button>
+        <button class="btn-sec sb-btn" data-freq="880.00" style="padding:4px 8px; font-size:0.75rem;">✨ Chime</button>
+      </div>
     </div>
 
     <div class="messages-box" id="messagesBox"></div>
+    <div class="typing-bar" id="typingIndicator"></div>
+
+    <div class="reply-banner" id="replyBanner">
+      <span id="replyPreviewText">Replying to...</span>
+      <button class="btn-sec" id="cancelReplyBtn" style="padding:2px 6px; font-size:0.75rem;">✕</button>
+    </div>
 
     <div class="input-bar">
-      <textarea id="msgInput" placeholder="Write a message..." style="flex: 1; height: 44px; resize: none;"></textarea>
-      <button id="sendBtn" style="padding: 12px 24px;">Send</button>
+      <button class="btn-sec" id="createPollBtn" title="Create Poll">📊</button>
+      <button class="btn-sec" id="voiceNoteBtn" title="Hold to Record Voice Note">🎤</button>
+      <textarea id="msgInput" placeholder="Message (supports URLs, YouTube links, and /poll)..." style="flex: 1; height: 42px; resize: none;"></textarea>
+      <button id="sendBtn" style="padding: 10px 20px;">Send</button>
     </div>
   </div>
 
-  <!-- In-Window Call Modal -->
+  <!-- Incoming Call Modal -->
   <div class="modal-overlay" id="callModal">
     <div class="modal-card">
       <div style="font-size: 3.5rem;">📹</div>
       <h2 id="callerNameTitle" style="color: var(--accent);">Incoming Call</h2>
-      <p style="color: var(--muted);">A friend is inviting you to a live video call.</p>
       <div style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
         <button class="btn-success" id="acceptCallBtn" style="padding: 12px 28px;">Accept</button>
         <button class="btn-danger" id="declineCallBtn" style="padding: 12px 28px;">Decline</button>
@@ -138,142 +179,109 @@
     </div>
   </div>
 
-  <!-- Full Discord-Style Categorized Settings Overlay -->
+  <!-- Full Settings Overlay -->
   <div class="settings-overlay" id="settingsOverlay">
     <div class="settings-nav">
-      <div class="settings-profile-box">
-        <div style="font-weight: 800;" id="settingsProfileName">User</div>
-        <div style="font-size: 0.75rem; color: var(--accent); font-family: monospace;">Peer Code: <span id="settingsProfileCode">----</span></div>
-      </div>
       <input type="text" id="settingsSearchInput" placeholder="🔍 Search settings..." style="margin-bottom: 8px; width: 100%;" />
-
       <div class="settings-cat">User Settings</div>
-      <button class="settings-tab active" data-sec="account">👤 Account & Profile</button>
-      <button class="settings-tab" data-sec="privacy">🛡️ Data & Privacy</button>
-      <button class="settings-tab" data-sec="permissions">💬 Messaging Permissions</button>
+      <button class="settings-tab active" data-sec="account">👤 Account & Recovery</button>
+      <button class="settings-tab" data-sec="privacy">🛡️ Data & Auto-Prune</button>
+      <button class="settings-tab" data-sec="permissions">💬 Permissions & Receipts</button>
       <button class="settings-tab" data-sec="notifications">🔔 Notifications</button>
-
       <div class="settings-cat">Experience</div>
-      <button class="settings-tab" data-sec="voice">🎙️ Voice & Video</button>
+      <button class="settings-tab" data-sec="voice">🎙️ Voice, Screen & PTT</button>
       <button class="settings-tab" data-sec="appearance">🎨 Appearance</button>
       <button class="settings-tab" data-sec="accessibility">♿ Accessibility</button>
       <button class="settings-tab" data-sec="system">⌨️ System & Time</button>
-
-      <div class="settings-cat">Advanced</div>
-      <button class="settings-tab" data-sec="developer">💻 Developer</button>
       <div style="flex:1;"></div>
-      <button class="btn-danger" id="closeSettingsBtn" style="margin-top: 16px;">ESC / Close Settings</button>
+      <button class="btn-danger" id="closeSettingsBtn">Close Settings</button>
     </div>
 
     <div class="settings-content">
-      <!-- 1. ACCOUNT & PROFILE -->
+      <!-- ACCOUNT & RECOVERY -->
       <div class="settings-section active" id="sec-account">
-        <h2>Account & Profile</h2>
+        <h2>Account, Activity & Peer Code Recovery</h2>
         <div class="setting-card">
           <div class="setting-row">
-            <div><strong>Display Name</strong><div style="font-size:0.8rem; color:var(--muted);">Shown to friends and in group channels</div></div>
-            <div style="display:flex; gap:6px;">
-              <input type="text" id="setDisplayName" placeholder="Your Nickname" />
-              <button id="saveDisplayNameBtn">Save</button>
-            </div>
+            <div><strong>Display Name</strong></div>
+            <div style="display:flex; gap:6px;"><input type="text" id="setDisplayName" /><button id="saveDisplayNameBtn">Save</button></div>
           </div>
           <div class="setting-row">
-            <div><strong>Online Status</strong><div style="font-size:0.8rem; color:var(--muted);">Control your presence indicator</div></div>
+            <div><strong>Custom Activity Status</strong><div style="font-size:0.8rem; color:var(--muted);">Shown below your name (e.g. "Playing Minecraft")</div></div>
+            <div style="display:flex; gap:6px;"><input type="text" id="setCustomActivity" placeholder="What are you doing?" /><button id="saveActivityBtn">Set</button></div>
+          </div>
+          <div class="setting-row">
+            <div><strong>Presence Status</strong></div>
             <select id="setOnlineStatus">
               <option value="online">🟢 Online</option>
               <option value="idle">🟡 Idle</option>
-              <option value="dnd">🔴 Do Not Disturb (Mutes sounds)</option>
+              <option value="dnd">🔴 Do Not Disturb</option>
               <option value="invisible">⚫ Invisible</option>
             </select>
           </div>
           <div class="setting-row">
-            <div><strong>Your 4-Digit Peer Code</strong><div style="font-size:0.8rem; color:var(--muted);">Share this code so friends can add you</div></div>
-            <button class="btn-danger" id="regenCodeBtn">Reset Code</button>
+            <div><strong>Recover / Set Custom 4-Digit Code</strong><div style="font-size:0.8rem; color:var(--muted);">Reclaim your old code so you never have to re-add friends</div></div>
+            <div style="display:flex; gap:6px;"><input type="text" id="recoverCodeInput" maxlength="4" placeholder="e.g. 4A9F" style="width:90px; text-transform:uppercase;" /><button id="applyRecoverCodeBtn">Restore Code</button></div>
           </div>
         </div>
       </div>
 
-      <!-- 2. DATA & PRIVACY -->
+      <!-- DATA & AUTO-PRUNE -->
       <div class="settings-section" id="sec-privacy">
-        <h2>Data & Privacy</h2>
+        <h2>Data & Storage Management</h2>
         <div class="setting-card">
           <div class="setting-row">
-            <div><strong>Encrypted Contact & Chat Backup</strong><div style="font-size:0.8rem; color:var(--muted);">Export your local data with AES-GCM encryption</div></div>
-            <button class="btn-sec" id="exportDataBtn">Export JSON</button>
+            <div><strong>Auto-Prune Old Messages at 80% Storage</strong><div style="font-size:0.8rem; color:var(--muted);">Automatically trims messages older than 30 days only when storage exceeds 80%</div></div>
+            <input type="checkbox" id="setAutoPrune" checked />
           </div>
           <div class="setting-row">
             <div><strong>Local Storage Usage</strong><div style="font-size:0.8rem; color:var(--muted);" id="storageStats">Calculating...</div></div>
-            <button class="btn-danger" id="clearHistoryBtn">Clear Chat History</button>
+            <button class="btn-danger" id="clearHistoryBtn">Clear All History</button>
           </div>
         </div>
       </div>
 
-      <!-- 3. MESSAGING PERMISSIONS -->
+      <!-- PERMISSIONS -->
       <div class="settings-section" id="sec-permissions">
         <h2>Messaging Permissions</h2>
         <div class="setting-card">
           <div class="setting-row">
-            <div><strong>Direct Message Filtering</strong><div style="font-size:0.8rem; color:var(--muted);">Route messages from non-friends into Requests</div></div>
+            <div><strong>Direct Message Filtering</strong></div>
             <select id="setDmFilter">
-              <option value="requests">Filter Strangers to Requests (Recommended)</option>
-              <option value="friends_only">Block All Non-Friends</option>
+              <option value="requests">Filter Strangers to Requests</option>
+              <option value="friends_only">Friends Only</option>
             </select>
           </div>
-          <div class="setting-row">
-            <div><strong>Send Read Receipts</strong><div style="font-size:0.8rem; color:var(--muted);">Let friends see when you've viewed their messages</div></div>
-            <input type="checkbox" id="setReceipts" checked />
-          </div>
-          <div class="setting-row">
-            <div><strong>Anti-Spam Rate Limiter</strong><div style="font-size:0.8rem; color:var(--muted);">Warn when sending more than 5 messages in 2 seconds</div></div>
-            <input type="checkbox" id="setAntiSpam" checked />
-          </div>
+          <div class="setting-row"><div><strong>Send Read Receipts</strong></div><input type="checkbox" id="setReceipts" checked /></div>
         </div>
       </div>
 
-      <!-- 4. NOTIFICATIONS -->
+      <!-- NOTIFICATIONS -->
       <div class="settings-section" id="sec-notifications">
         <h2>Notifications</h2>
         <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Desktop Push Notifications</strong><div style="font-size:0.8rem; color:var(--muted);">Notify when messages arrive while chat is unfocused</div></div>
-            <input type="checkbox" id="setNotif" checked />
-          </div>
-          <div class="setting-row">
-            <div><strong>Message Chime & Call Ringtones</strong><div style="font-size:0.8rem; color:var(--muted);">Play audio alerts for incoming messages and calls</div></div>
-            <input type="checkbox" id="setSound" checked />
-          </div>
-          <div class="setting-row">
-            <div><strong>Alert Volume</strong></div>
-            <input type="range" id="setVolume" min="0" max="1" step="0.1" value="1" />
-          </div>
+          <div class="setting-row"><div><strong>Desktop Notifications</strong></div><input type="checkbox" id="setNotif" checked /></div>
+          <div class="setting-row"><div><strong>Sound Effects & Ringtones</strong></div><input type="checkbox" id="setSound" checked /></div>
+          <div class="setting-row"><div><strong>Alert Volume</strong></div><input type="range" id="setVolume" min="0" max="1" step="0.1" value="1" /></div>
         </div>
       </div>
 
-      <!-- 5. VOICE & VIDEO -->
+      <!-- VOICE & SCREEN -->
       <div class="settings-section" id="sec-voice">
-        <h2>Voice & Video</h2>
+        <h2>Voice, Video & Screen Sharing</h2>
         <div class="setting-card">
           <div class="setting-row">
-            <div><strong>Echo Cancellation</strong><div style="font-size:0.8rem; color:var(--muted);">Prevent microphone feedback during WebRTC calls</div></div>
-            <input type="checkbox" id="setEcho" checked />
-          </div>
-          <div class="setting-row">
-            <div><strong>Noise Suppression</strong><div style="font-size:0.8rem; color:var(--muted);">Filter background noise on your microphone</div></div>
-            <input type="checkbox" id="setNoise" checked />
-          </div>
-          <div class="setting-row">
-            <div><strong>Test Call Ringtone</strong><div style="font-size:0.8rem; color:var(--muted);">Verify your audio output is working</div></div>
-            <button class="btn-sec" id="testRingtoneBtn">Play Test Sound</button>
+            <div><strong>Weekly Screen Share Quota</strong><div style="font-size:0.8rem; color:var(--muted);" id="settingsScreenQuota">10m 00s remaining this week</div></div>
           </div>
         </div>
       </div>
 
-      <!-- 6. APPEARANCE -->
+      <!-- APPEARANCE -->
       <div class="settings-section" id="sec-appearance">
         <h2>Appearance</h2>
         <div class="setting-card">
           <div class="setting-row">
-            <div><strong>Theme</strong></div>
+            <div><strong>Color Theme</strong></div>
             <select id="themeSelect">
               <option value="discord-dark">Discord Dark</option>
               <option value="cyber-dark">Cyber Neon</option>
@@ -285,72 +293,42 @@
               <option value="custom">Custom Theme</option>
             </select>
           </div>
-          <div id="customThemeBox" style="display:none; flex-direction:column; gap:10px; padding-top:8px;">
-            <div class="setting-row"><span>Background Color</span><input type="color" id="custBg" value="#121212" /></div>
-            <div class="setting-row"><span>Accent Color</span><input type="color" id="custAccent" value="#5865f2" /></div>
-            <div class="setting-row"><span>Text Color</span><input type="color" id="custText" value="#ffffff" /></div>
+          <div id="customThemeBox" style="display:none; flex-direction:column; gap:10px;">
+            <div class="setting-row"><span>Background</span><input type="color" id="custBg" value="#121212" /></div>
+            <div class="setting-row"><span>Accent</span><input type="color" id="custAccent" value="#5865f2" /></div>
+            <div class="setting-row"><span>Text</span><input type="color" id="custText" value="#ffffff" /></div>
             <button id="saveCustomThemeBtn">Apply Custom Theme</button>
           </div>
         </div>
       </div>
 
-      <!-- 7. ACCESSIBILITY -->
+      <!-- ACCESSIBILITY -->
       <div class="settings-section" id="sec-accessibility">
         <h2>Accessibility</h2>
         <div class="setting-card">
           <div class="setting-row">
-            <div><strong>Chat Font Scaling</strong></div>
+            <div><strong>Font Scaling</strong></div>
             <select id="setFontSize">
-              <option value="13px">Small (13px)</option>
-              <option value="15px" selected>Normal (15px)</option>
-              <option value="17px">Large (17px)</option>
-              <option value="20px">Extra Large (20px)</option>
+              <option value="13px">Small</option>
+              <option value="15px" selected>Normal</option>
+              <option value="17px">Large</option>
+              <option value="20px">Extra Large</option>
             </select>
           </div>
-          <div class="setting-row">
-            <div><strong>High Contrast Mode</strong><div style="font-size:0.8rem; color:var(--muted);">Increase border contrast and visual sharpness</div></div>
-            <input type="checkbox" id="setHighContrast" />
-          </div>
-          <div class="setting-row">
-            <div><strong>Compact Message Density</strong><div style="font-size:0.8rem; color:var(--muted);">Fit more messages on screen at once</div></div>
-            <input type="checkbox" id="setCompact" />
-          </div>
-          <div class="setting-row">
-            <div><strong>Reduced Motion</strong><div style="font-size:0.8rem; color:var(--muted);">Disable UI hover animations and transitions</div></div>
-            <input type="checkbox" id="setReducedMotion" />
-          </div>
+          <div class="setting-row"><div><strong>High Contrast Mode</strong></div><input type="checkbox" id="setHighContrast" /></div>
+          <div class="setting-row"><div><strong>Compact Density</strong></div><input type="checkbox" id="setCompact" /></div>
+          <div class="setting-row"><div><strong>Reduced Motion</strong></div><input type="checkbox" id="setReducedMotion" /></div>
         </div>
       </div>
 
-      <!-- 8. SYSTEM & TIME -->
+      <!-- SYSTEM -->
       <div class="settings-section" id="sec-system">
-        <h2>System & Language / Time</h2>
+        <h2>System & Time</h2>
         <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Press Enter to Send</strong><div style="font-size:0.8rem; color:var(--muted);">Use Shift+Enter for a new line</div></div>
-            <input type="checkbox" id="setEnterSend" checked />
-          </div>
+          <div class="setting-row"><div><strong>Press Enter to Send</strong></div><input type="checkbox" id="setEnterSend" checked /></div>
           <div class="setting-row">
             <div><strong>Time Format</strong></div>
-            <select id="setTimeFormat">
-              <option value="12h">12-Hour (e.g., 10:00 PM)</option>
-              <option value="24h">24-Hour (e.g., 22:00)</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <!-- 9. DEVELOPER -->
-      <div class="settings-section" id="sec-developer">
-        <h2>Developer Settings</h2>
-        <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Developer Mode</strong><div style="font-size:0.8rem; color:var(--muted);">Display raw PeerJS connection IDs and debug metadata</div></div>
-            <input type="checkbox" id="setDevMode" />
-          </div>
-          <div id="devDebugBox" style="display:none; font-family:monospace; font-size:0.8rem; background:var(--bg-card); padding:10px; border-radius:8px; color:var(--accent);">
-            PeerJS Node: <span id="devFullId">---</span><br>
-            Active WebRTC Channels: <span id="devConnCount">0</span>
+            <select id="setTimeFormat"><option value="12h">12-Hour</option><option value="24h">24-Hour</option></select>
           </div>
         </div>
       </div>
