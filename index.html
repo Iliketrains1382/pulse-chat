@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="discord-dark">
+<head>
+  <meta charset="UTF-8">
+  <title>Pulse Workspace</title>
+  <script src="peerjs.min.js"></script>
+  <style>
+    :root[data-theme="discord-dark"] { --bg-dark: #313338; --bg-panel: #2b2d31; --bg-card: #1e1f22; --border: #3f4147; --accent: #5865f2; --text: #f2f3f5; --muted: #949ba4; --sent: #5865f2; --rec: #2b2d31; }
+    :root[data-theme="cyber-dark"] { --bg-dark: #070a12; --bg-panel: #0f172a; --bg-card: #1e293b; --border: rgba(56,189,248,0.3); --accent: #00f2fe; --text: #f8fafc; --muted: #94a3b8; --sent: #0284c7; --rec: #1e293b; }
+    :root[data-theme="light"] { --bg-dark: #ffffff; --bg-panel: #f2f3f5; --bg-card: #e3e5e8; --border: #d4d7dc; --accent: #5865f2; --text: #060607; --muted: #4e5058; --sent: #5865f2; --rec: #f2f3f5; }
+    :root[data-theme="emerald"] { --bg-dark: #064e3b; --bg-panel: #022c22; --bg-card: #065f46; --border: #059669; --accent: #10b981; --text: #ecfdf5; --muted: #6ee7b7; --sent: #059669; --rec: #022c22; }
+    :root[data-theme="purple"] { --bg-dark: #2e1065; --bg-panel: #1e1b4b; --bg-card: #3b0764; --border: #7c3aed; --accent: #a855f7; --text: #faf5ff; --muted: #c084fc; --sent: #7c3aed; --rec: #1e1b4b; }
+    :root[data-theme="crimson"] { --bg-dark: #1f090d; --bg-panel: #2d0d13; --bg-card: #45121b; --border: #be123c; --accent: #f43f5e; --text: #fff1f2; --muted: #fda4af; --sent: #e11d48; --rec: #2d0d13; }
+    :root[data-theme="sunset"] { --bg-dark: #271300; --bg-panel: #3b1d00; --bg-card: #522900; --border: #d97706; --accent: #f59e0b; --text: #fffbeb; --muted: #fcd34d; --sent: #d97706; --rec: #3b1d00; }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { height: 100vh; background: var(--bg-dark); color: var(--text); display: flex; overflow: hidden; font-size: var(--font-size, 15px); }
+    body.high-contrast { --border: #ffffff; filter: contrast(1.15); }
+    body.compact .message { padding: 6px 10px; margin-bottom: 2px; }
+    body.reduced-motion * { transition: none !important; animation: none !important; }
+
+    /* Server Rail */
+    .server-rail { width: 68px; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 12px; }
+    .rail-btn { width: 46px; height: 46px; border-radius: 50%; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border); font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; position: relative; }
+    .rail-btn:hover, .rail-btn.active { border-radius: 14px; background: var(--accent); color: #fff; }
+    .rail-badge { position: absolute; top: -2px; right: -2px; background: #ef4444; color: #fff; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; font-weight: 800; }
+
+    /* Sidebar */
+    .sidebar { width: 260px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+    .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
+    .list-container { flex: 1; padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .list-card { padding: 10px 12px; border-radius: 8px; background: transparent; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: 0.15s; }
+    .list-card:hover, .list-card.active { background: rgba(255,255,255,0.08); }
+
+    .user-footer { padding: 10px 14px; background: var(--bg-card); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .status-pill { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .status-online { background: #10b981; }
+    .status-idle { background: #f59e0b; }
+    .status-dnd { background: #ef4444; }
+    .status-invisible { background: #64748b; }
+
+    /* Main Chat Area */
+    .main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+    .chat-header { padding: 14px 24px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; }
+    .messages-box { flex: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .message { max-width: 65%; padding: 10px 16px; border-radius: 14px; word-break: break-word; line-height: 1.4; }
+    .message.sent { align-self: flex-end; background: var(--sent); color: #fff; }
+    .message.received { align-self: flex-start; background: var(--rec); border: 1px solid var(--border); }
+    .msg-meta { font-size: 0.7rem; opacity: 0.75; margin-top: 4px; display: flex; justify-content: space-between; gap: 12px; }
+
+    .input-bar { padding: 16px 24px; background: var(--bg-panel); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
+    input, textarea, select { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 10px; outline: none; font-size: 0.9rem; }
+    button { background: var(--accent); color: #fff; font-weight: 700; border: none; padding: 8px 16px; border-radius: 10px; cursor: pointer; }
+    button.btn-sec { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
+    button.btn-danger { background: #ef4444; color: #fff; }
+    button.btn-success { background: #10b981; color: #000; }
+
+    /* Full-Screen Discord Settings Overlay */
+    .settings-overlay { position: fixed; inset: 0; background: var(--bg-dark); display: none; z-index: 200; }
+    .settings-nav { width: 250px; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 24px 12px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+    .settings-profile-box { background: var(--bg-card); padding: 12px; border-radius: 10px; margin-bottom: 12px; border: 1px solid var(--border); }
+    .settings-cat { font-size: 0.7rem; font-weight: 800; color: var(--muted); text-transform: uppercase; padding: 10px 10px 4px; letter-spacing: 0.5px; }
+    .settings-tab { text-align: left; background: transparent; color: var(--muted); padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; cursor: pointer; border: none; }
+    .settings-tab:hover, .settings-tab.active { background: rgba(255,255,255,0.08); color: var(--text); }
+    .settings-content { flex: 1; padding: 36px 48px; overflow-y: auto; max-width: 780px; }
+    .settings-section { display: none; flex-direction: column; gap: 16px; }
+    .settings-section.active { display: flex; }
+    .setting-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+    .setting-row:last-child { border-bottom: none; }
+
+    /* Call Modal */
+    .modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 100; }
+    .modal-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 420px; text-align: center; display: flex; flex-direction: column; gap: 14px; }
+  </style>
+</head>
+<body>
+
+  <!-- Left Server Rail -->
+  <div class="server-rail">
+    <button class="rail-btn active" id="railFriends" title="Direct Messages">💬</button>
+    <button class="rail-btn" id="railGroups" title="Group Channels">👥</button>
+    <button class="rail-btn" id="railRequests" title="Requests">📩 <span class="rail-badge" id="reqBadge" style="display:none;">0</span></button>
+    <div style="flex:1;"></div>
+    <button class="rail-btn" id="railSettings" title="User Settings">⚙️</button>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <span id="sidebarTitle">DIRECT MESSAGES</span>
+      <button class="btn-sec" id="sidebarActionBtn" style="padding: 4px 10px; font-size: 0.8rem;">+ Add Friend</button>
+    </div>
+    <div class="list-container" id="sidebarList"></div>
+    <div class="user-footer">
+      <div>
+        <div style="font-weight: 700; font-size: 0.9rem;"><span class="status-pill status-online" id="footerStatusDot"></span><span id="footerDisplayName">User</span></div>
+        <div style="font-size: 0.72rem; color: var(--accent); font-family: monospace;">CODE: <span id="myCodeDisplay">----</span></div>
+      </div>
+      <button class="btn-sec" id="copyCodeBtn" style="padding: 4px 8px; font-size: 0.75rem;">Copy</button>
+    </div>
+  </div>
+
+  <!-- Main Chat Area -->
+  <div class="main-area">
+    <div class="chat-header">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span id="activeChatTitle">Select a Friend or Group</span>
+        <span id="offlineBanner" style="display:none; font-size:0.75rem; background:#eab308; color:#000; padding:2px 8px; border-radius:10px;">Offline Mode (Messages queued)</span>
+      </div>
+      <button id="wsCallBtn" style="display:none;">📹 Start Video Call</button>
+    </div>
+
+    <div id="mediaArea" style="display: none; padding: 14px; background: #000; gap: 14px; justify-content: center; border-bottom: 1px solid var(--border);">
+      <video id="localVideo" autoplay muted playsinline style="width: 240px; border-radius: 10px;"></video>
+      <video id="remoteVideo" autoplay playsinline style="width: 240px; border-radius: 10px;"></video>
+      <button class="btn-danger" id="endCallBtn" style="align-self: flex-start;">End Call</button>
+    </div>
+
+    <div class="messages-box" id="messagesBox"></div>
+
+    <div class="input-bar">
+      <textarea id="msgInput" placeholder="Write a message..." style="flex: 1; height: 44px; resize: none;"></textarea>
+      <button id="sendBtn" style="padding: 12px 24px;">Send</button>
+    </div>
+  </div>
+
+  <!-- In-Window Call Modal -->
+  <div class="modal-overlay" id="callModal">
+    <div class="modal-card">
+      <div style="font-size: 3.5rem;">📹</div>
+      <h2 id="callerNameTitle" style="color: var(--accent);">Incoming Call</h2>
+      <p style="color: var(--muted);">A friend is inviting you to a live video call.</p>
+      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
+        <button class="btn-success" id="acceptCallBtn" style="padding: 12px 28px;">Accept</button>
+        <button class="btn-danger" id="declineCallBtn" style="padding: 12px 28px;">Decline</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full Discord-Style Categorized Settings Overlay -->
+  <div class="settings-overlay" id="settingsOverlay">
+    <div class="settings-nav">
+      <div class="settings-profile-box">
+        <div style="font-weight: 800;" id="settingsProfileName">User</div>
+        <div style="font-size: 0.75rem; color: var(--accent); font-family: monospace;">Peer Code: <span id="settingsProfileCode">----</span></div>
+      </div>
+      <input type="text" id="settingsSearchInput" placeholder="🔍 Search settings..." style="margin-bottom: 8px; width: 100%;" />
+
+      <div class="settings-cat">User Settings</div>
+      <button class="settings-tab active" data-sec="account">👤 Account & Profile</button>
+      <button class="settings-tab" data-sec="privacy">🛡️ Data & Privacy</button>
+      <button class="settings-tab" data-sec="permissions">💬 Messaging Permissions</button>
+      <button class="settings-tab" data-sec="notifications">🔔 Notifications</button>
+
+      <div class="settings-cat">Experience</div>
+      <button class="settings-tab" data-sec="voice">🎙️ Voice & Video</button>
+      <button class="settings-tab" data-sec="appearance">🎨 Appearance</button>
+      <button class="settings-tab" data-sec="accessibility">♿ Accessibility</button>
+      <button class="settings-tab" data-sec="system">⌨️ System & Time</button>
+
+      <div class="settings-cat">Advanced</div>
+      <button class="settings-tab" data-sec="developer">💻 Developer</button>
+      <div style="flex:1;"></div>
+      <button class="btn-danger" id="closeSettingsBtn" style="margin-top: 16px;">ESC / Close Settings</button>
+    </div>
+
+    <div class="settings-content">
+      <!-- 1. ACCOUNT & PROFILE -->
+      <div class="settings-section active" id="sec-account">
+        <h2>Account & Profile</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Display Name</strong><div style="font-size:0.8rem; color:var(--muted);">Shown to friends and in group channels</div></div>
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="setDisplayName" placeholder="Your Nickname" />
+              <button id="saveDisplayNameBtn">Save</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div><strong>Online Status</strong><div style="font-size:0.8rem; color:var(--muted);">Control your presence indicator</div></div>
+            <select id="setOnlineStatus">
+              <option value="online">🟢 Online</option>
+              <option value="idle">🟡 Idle</option>
+              <option value="dnd">🔴 Do Not Disturb (Mutes sounds)</option>
+              <option value="invisible">⚫ Invisible</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div><strong>Your 4-Digit Peer Code</strong><div style="font-size:0.8rem; color:var(--muted);">Share this code so friends can add you</div></div>
+            <button class="btn-danger" id="regenCodeBtn">Reset Code</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. DATA & PRIVACY -->
+      <div class="settings-section" id="sec-privacy">
+        <h2>Data & Privacy</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Encrypted Contact & Chat Backup</strong><div style="font-size:0.8rem; color:var(--muted);">Export your local data with AES-GCM encryption</div></div>
+            <button class="btn-sec" id="exportDataBtn">Export JSON</button>
+          </div>
+          <div class="setting-row">
+            <div><strong>Local Storage Usage</strong><div style="font-size:0.8rem; color:var(--muted);" id="storageStats">Calculating...</div></div>
+            <button class="btn-danger" id="clearHistoryBtn">Clear Chat History</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. MESSAGING PERMISSIONS -->
+      <div class="settings-section" id="sec-permissions">
+        <h2>Messaging Permissions</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Direct Message Filtering</strong><div style="font-size:0.8rem; color:var(--muted);">Route messages from non-friends into Requests</div></div>
+            <select id="setDmFilter">
+              <option value="requests">Filter Strangers to Requests (Recommended)</option>
+              <option value="friends_only">Block All Non-Friends</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div><strong>Send Read Receipts</strong><div style="font-size:0.8rem; color:var(--muted);">Let friends see when you've viewed their messages</div></div>
+            <input type="checkbox" id="setReceipts" checked />
+          </div>
+          <div class="setting-row">
+            <div><strong>Anti-Spam Rate Limiter</strong><div style="font-size:0.8rem; color:var(--muted);">Warn when sending more than 5 messages in 2 seconds</div></div>
+            <input type="checkbox" id="setAntiSpam" checked />
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. NOTIFICATIONS -->
+      <div class="settings-section" id="sec-notifications">
+        <h2>Notifications</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Desktop Push Notifications</strong><div style="font-size:0.8rem; color:var(--muted);">Notify when messages arrive while chat is unfocused</div></div>
+            <input type="checkbox" id="setNotif" checked />
+          </div>
+          <div class="setting-row">
+            <div><strong>Message Chime & Call Ringtones</strong><div style="font-size:0.8rem; color:var(--muted);">Play audio alerts for incoming messages and calls</div></div>
+            <input type="checkbox" id="setSound" checked />
+          </div>
+          <div class="setting-row">
+            <div><strong>Alert Volume</strong></div>
+            <input type="range" id="setVolume" min="0" max="1" step="0.1" value="1" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. VOICE & VIDEO -->
+      <div class="settings-section" id="sec-voice">
+        <h2>Voice & Video</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Echo Cancellation</strong><div style="font-size:0.8rem; color:var(--muted);">Prevent microphone feedback during WebRTC calls</div></div>
+            <input type="checkbox" id="setEcho" checked />
+          </div>
+          <div class="setting-row">
+            <div><strong>Noise Suppression</strong><div style="font-size:0.8rem; color:var(--muted);">Filter background noise on your microphone</div></div>
+            <input type="checkbox" id="setNoise" checked />
+          </div>
+          <div class="setting-row">
+            <div><strong>Test Call Ringtone</strong><div style="font-size:0.8rem; color:var(--muted);">Verify your audio output is working</div></div>
+            <button class="btn-sec" id="testRingtoneBtn">Play Test Sound</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. APPEARANCE -->
+      <div class="settings-section" id="sec-appearance">
+        <h2>Appearance</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Theme</strong></div>
+            <select id="themeSelect">
+              <option value="discord-dark">Discord Dark</option>
+              <option value="cyber-dark">Cyber Neon</option>
+              <option value="light">Clean Light</option>
+              <option value="emerald">Emerald Forest</option>
+              <option value="purple">Obsidian Purple</option>
+              <option value="crimson">Crimson Red</option>
+              <option value="sunset">Amber Sunset</option>
+              <option value="custom">Custom Theme</option>
+            </select>
+          </div>
+          <div id="customThemeBox" style="display:none; flex-direction:column; gap:10px; padding-top:8px;">
+            <div class="setting-row"><span>Background Color</span><input type="color" id="custBg" value="#121212" /></div>
+            <div class="setting-row"><span>Accent Color</span><input type="color" id="custAccent" value="#5865f2" /></div>
+            <div class="setting-row"><span>Text Color</span><input type="color" id="custText" value="#ffffff" /></div>
+            <button id="saveCustomThemeBtn">Apply Custom Theme</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. ACCESSIBILITY -->
+      <div class="settings-section" id="sec-accessibility">
+        <h2>Accessibility</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Chat Font Scaling</strong></div>
+            <select id="setFontSize">
+              <option value="13px">Small (13px)</option>
+              <option value="15px" selected>Normal (15px)</option>
+              <option value="17px">Large (17px)</option>
+              <option value="20px">Extra Large (20px)</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div><strong>High Contrast Mode</strong><div style="font-size:0.8rem; color:var(--muted);">Increase border contrast and visual sharpness</div></div>
+            <input type="checkbox" id="setHighContrast" />
+          </div>
+          <div class="setting-row">
+            <div><strong>Compact Message Density</strong><div style="font-size:0.8rem; color:var(--muted);">Fit more messages on screen at once</div></div>
+            <input type="checkbox" id="setCompact" />
+          </div>
+          <div class="setting-row">
+            <div><strong>Reduced Motion</strong><div style="font-size:0.8rem; color:var(--muted);">Disable UI hover animations and transitions</div></div>
+            <input type="checkbox" id="setReducedMotion" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 8. SYSTEM & TIME -->
+      <div class="settings-section" id="sec-system">
+        <h2>System & Language / Time</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Press Enter to Send</strong><div style="font-size:0.8rem; color:var(--muted);">Use Shift+Enter for a new line</div></div>
+            <input type="checkbox" id="setEnterSend" checked />
+          </div>
+          <div class="setting-row">
+            <div><strong>Time Format</strong></div>
+            <select id="setTimeFormat">
+              <option value="12h">12-Hour (e.g., 10:00 PM)</option>
+              <option value="24h">24-Hour (e.g., 22:00)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 9. DEVELOPER -->
+      <div class="settings-section" id="sec-developer">
+        <h2>Developer Settings</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Developer Mode</strong><div style="font-size:0.8rem; color:var(--muted);">Display raw PeerJS connection IDs and debug metadata</div></div>
+            <input type="checkbox" id="setDevMode" />
+          </div>
+          <div id="devDebugBox" style="display:none; font-family:monospace; font-size:0.8rem; background:var(--bg-card); padding:10px; border-radius:8px; color:var(--accent);">
+            PeerJS Node: <span id="devFullId">---</span><br>
+            Active WebRTC Channels: <span id="devConnCount">0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
