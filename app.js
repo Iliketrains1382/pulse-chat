@@ -64,6 +64,44 @@ function setState(obj, cb) {
   }
 }
 
+// --- Friend Removal, History Wipe & Block Manager ---
+function removeFriendAndRecords(targetCode, alsoBlock = false) {
+  const code = targetCode.trim().toUpperCase();
+  getState(['pulse_friends', 'pulse_history', 'pulse_requests', 'pulse_outbox', 'pulse_pending_inbox', 'pulse_blocked'], (res) => {
+    const friends = (res.pulse_friends || []).filter(f => f.code !== code);
+    const requests = (res.pulse_requests || []).filter(r => r.code !== code);
+    const outbox = (res.pulse_outbox || []).filter(o => o.targetCode !== code);
+    const pending = (res.pulse_pending_inbox || []).filter(p => p.senderCode !== code);
+    const blocked = res.pulse_blocked || [];
+    const history = res.pulse_history || {};
+    delete history[code];
+
+    if (alsoBlock && !blocked.includes(code)) {
+      blocked.push(code);
+    }
+
+    // Close active PeerJS connections to this user
+    ['pulse-ws-', 'pulse-pop-', 'pulse-bg-'].forEach(prefix => {
+      const fullId = prefix + code;
+      if (liveConns[fullId]) {
+        try { liveConns[fullId].close(); } catch (e) {}
+        delete liveConns[fullId];
+      }
+    });
+
+    if (activeTarget && activeTarget.id === code) activeTarget = null;
+
+    setState({
+      pulse_friends: friends,
+      pulse_history: history,
+      pulse_requests: requests,
+      pulse_outbox: outbox,
+      pulse_pending_inbox: pending,
+      pulse_blocked: blocked
+    }, scheduleRefresh);
+  });
+}
+
 // --- Pro & 3-Day Trial Checker ---
 function checkProAccess(cb) {
   getState(['pulse_pro_permanent', 'pulse_trial_start'], (res) => {
@@ -232,6 +270,9 @@ function scheduleRefresh() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Automatically purge all records of BIS9 on load
+  removeFriendAndRecords('BIS9', false);
+
   loadSettingsAndTheme();
   updateProUI();
   initPeerNetwork();
@@ -254,7 +295,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   } else {
-    // Sync state periodically when running on GitHub Pages
     setInterval(() => {
       deliverPendingInbox();
       scheduleRefresh();
@@ -404,15 +444,21 @@ function initPeerNetwork() {
 
     peer.on('call', (call) => {
       if (!call || !call.peer) return;
-      currentCall = call;
-      playSound(ringtoneAudio);
       const callerCode = call.peer.replace(/^pulse-(ws|pop|bg)-/, '');
-      if (IS_POPUP) {
-        openWorkspaceTab();
-      } else {
-        document.getElementById('callerNameTitle').textContent = `Call from ${callerCode}`;
-        document.getElementById('callModal').style.display = 'flex';
-      }
+      getState(['pulse_blocked'], (res) => {
+        if ((res.pulse_blocked || []).includes(callerCode)) {
+          try { call.close(); } catch (e) {}
+          return;
+        }
+        currentCall = call;
+        playSound(ringtoneAudio);
+        if (IS_POPUP) {
+          openWorkspaceTab();
+        } else {
+          document.getElementById('callerNameTitle').textContent = `Call from ${callerCode}`;
+          document.getElementById('callModal').style.display = 'flex';
+        }
+      });
     });
   });
 }
@@ -458,64 +504,68 @@ function handleIncomingConnection(conn) {
   conn.on('data', (payload) => {
     if (!payload) return;
 
-    if (payload.type === 'TYPING') {
-      if (activeTarget && activeTarget.id === senderCode && document.getElementById('typingIndicator')) {
-        document.getElementById('typingIndicator').textContent = `${senderCode} is typing...`;
-        clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(() => { document.getElementById('typingIndicator').textContent = ''; }, 2500);
-      }
-      return;
-    }
+    getState(['pulse_blocked'], (blkRes) => {
+      if ((blkRes.pulse_blocked || []).includes(senderCode)) return;
 
-    if (payload.type === 'FRIEND_REQUEST') {
-      addRequest({ type: 'friend', code: senderCode, name: payload.name || senderCode });
-      return;
-    }
-
-    if (payload.type === 'GROUP_MSG') {
-      saveMessageToHistory(payload.groupId, {
-        id: payload.msgId,
-        sender: payload.senderName || senderCode,
-        text: payload.text,
-        replyTo: payload.replyTo,
-        poll: payload.poll,
-        audioData: payload.audioData,
-        time: Date.now(),
-        self: false
-      });
-      notifyIfNotViewing(payload.groupId, `${payload.groupName} (${senderCode})`, payload.text || 'Sent media', payload.msgId);
-      return;
-    }
-
-    if (payload.type === 'DM') {
-      getState(['pulse_friends', 'pulse_settings'], (res) => {
-        const friends = res.pulse_friends || [];
-        const dmFilter = (res.pulse_settings || {}).dmFilter || 'requests';
-        const isFriend = friends.some(f => f.code === senderCode);
-
-        if (!isFriend) {
-          if (dmFilter === 'friends_only') return;
-          addRequest({ type: 'message', code: senderCode, text: payload.text });
-        } else {
-          saveMessageToHistory(senderCode, {
-            id: payload.msgId,
-            sender: senderCode,
-            text: payload.text,
-            replyTo: payload.replyTo,
-            poll: payload.poll,
-            audioData: payload.audioData,
-            time: Date.now(),
-            self: false
-          });
-          if (conn.open) conn.send({ type: 'READ_ACK', msgId: payload.msgId });
-          notifyIfNotViewing(senderCode, senderCode, payload.text || 'Sent media', payload.msgId);
+      if (payload.type === 'TYPING') {
+        if (activeTarget && activeTarget.id === senderCode && document.getElementById('typingIndicator')) {
+          document.getElementById('typingIndicator').textContent = `${senderCode} is typing...`;
+          clearTimeout(typingTimeout);
+          typingTimeout = setTimeout(() => { document.getElementById('typingIndicator').textContent = ''; }, 2500);
         }
-      });
-    }
+        return;
+      }
 
-    if (payload.type === 'READ_ACK') {
-      markMessageRead(senderCode, payload.msgId);
-    }
+      if (payload.type === 'FRIEND_REQUEST') {
+        addRequest({ type: 'friend', code: senderCode, name: payload.name || senderCode });
+        return;
+      }
+
+      if (payload.type === 'GROUP_MSG') {
+        saveMessageToHistory(payload.groupId, {
+          id: payload.msgId,
+          sender: payload.senderName || senderCode,
+          text: payload.text,
+          replyTo: payload.replyTo,
+          poll: payload.poll,
+          audioData: payload.audioData,
+          time: Date.now(),
+          self: false
+        });
+        notifyIfNotViewing(payload.groupId, `${payload.groupName} (${senderCode})`, payload.text || 'Sent media', payload.msgId);
+        return;
+      }
+
+      if (payload.type === 'DM') {
+        getState(['pulse_friends', 'pulse_settings'], (res) => {
+          const friends = res.pulse_friends || [];
+          const dmFilter = (res.pulse_settings || {}).dmFilter || 'requests';
+          const isFriend = friends.some(f => f.code === senderCode);
+
+          if (!isFriend) {
+            if (dmFilter === 'friends_only') return;
+            addRequest({ type: 'message', code: senderCode, text: payload.text });
+          } else {
+            saveMessageToHistory(senderCode, {
+              id: payload.msgId,
+              sender: senderCode,
+              text: payload.text,
+              replyTo: payload.replyTo,
+              poll: payload.poll,
+              audioData: payload.audioData,
+              time: Date.now(),
+              self: false
+            });
+            if (conn.open) conn.send({ type: 'READ_ACK', msgId: payload.msgId });
+            notifyIfNotViewing(senderCode, senderCode, payload.text || 'Sent media', payload.msgId);
+          }
+        });
+      }
+
+      if (payload.type === 'READ_ACK') {
+        markMessageRead(senderCode, payload.msgId);
+      }
+    });
   });
 
   conn.on('close', () => {
@@ -529,15 +579,17 @@ function handleIncomingConnection(conn) {
 }
 
 function deliverPendingInbox() {
-  getState(['pulse_pending_inbox', 'pulse_friends', 'pulse_history', 'pulse_requests'], (res) => {
+  getState(['pulse_pending_inbox', 'pulse_friends', 'pulse_history', 'pulse_requests', 'pulse_blocked'], (res) => {
     const pending = res.pulse_pending_inbox || [];
     if (pending.length === 0) return;
 
     const friends = res.pulse_friends || [];
     const history = res.pulse_history || {};
     const requests = res.pulse_requests || [];
+    const blocked = res.pulse_blocked || [];
 
     pending.forEach(item => {
+      if (blocked.includes(item.senderCode)) return;
       if (!friends.some(f => f.code === item.senderCode)) {
         requests.push({ type: 'message', code: item.senderCode, text: item.text });
       } else {
@@ -698,17 +750,31 @@ function renderList(containerId, items, type) {
     const el = document.createElement('div');
     el.className = `list-card ${activeTarget && activeTarget.id === id ? 'active' : ''}`;
     el.innerHTML = `
-      <div>
+      <div style="flex:1; overflow:hidden;">
         <div style="font-weight:700;">${type === 'group' ? '# ' : ''}${item.name}</div>
         <div style="font-size:0.72rem; color:var(--muted);">${type === 'dm' ? `Code: ${id}` : `${item.members.length} members`}</div>
       </div>
-      ${type === 'dm' ? `<span style="color:${isOnline ? '#10b981' : '#64748b'};">●</span>` : ''}
+      <div style="display:flex; align-items:center; gap:8px;">
+        ${type === 'dm' ? `<span style="color:${isOnline ? '#10b981' : '#64748b'};">●</span>` : ''}
+        ${type === 'dm' ? `<button class="btn-sec" data-remove-friend="${id}" title="Remove Friend & Delete Records" style="padding:2px 6px; font-size:0.72rem; color:#ef4444;">✕</button>` : ''}
+      </div>
     `;
-    el.onclick = () => {
+    el.onclick = (e) => {
+      if (e.target.closest('[data-remove-friend]')) return;
       activeTarget = { type, id, name: item.name, members: item.members };
       if (IS_POPUP) switchPopupTab('chats');
       scheduleRefresh();
     };
+    const remBtn = el.querySelector('[data-remove-friend]');
+    if (remBtn) {
+      remBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (confirm(`Remove ${item.name} (${id}) and delete all chat records?`)) {
+          const blockToo = confirm(`Also block ${id} so they cannot message you again?`);
+          removeFriendAndRecords(id, blockToo);
+        }
+      };
+    }
     container.appendChild(el);
   });
 }
@@ -996,11 +1062,13 @@ function setActiveRail(btn, title, actionText, actionFn) {
 }
 
 function addFriendByCode(code, name) {
-  getState(['pulse_friends'], (res) => {
+  const cleanCode = code.trim().toUpperCase();
+  getState(['pulse_friends', 'pulse_blocked'], (res) => {
     const friends = res.pulse_friends || [];
-    if (!friends.some(f => f.code === code)) {
-      friends.push({ code, name });
-      setState({ pulse_friends: friends }, () => { connectToCode(code); scheduleRefresh(); });
+    const blocked = (res.pulse_blocked || []).filter(b => b !== cleanCode);
+    if (!friends.some(f => f.code === cleanCode)) {
+      friends.push({ code: cleanCode, name });
+      setState({ pulse_friends: friends, pulse_blocked: blocked }, () => { connectToCode(cleanCode); scheduleRefresh(); });
     }
   });
 }
