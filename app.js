@@ -344,7 +344,7 @@ function getMediaStreamWithFallback(cb) {
   });
 }
 
-// --- PeerJS Networking (With Safe Connection Guards) ---
+// --- PeerJS Networking (Clean Logs & Safe Connection Guards) ---
 function initPeerNetwork() {
   getState(['pulse_my_code'], (res) => {
     myCode = res.pulse_my_code;
@@ -362,7 +362,11 @@ function initPeerNetwork() {
 
     peer.on('open', () => connectToAllFriends());
     peer.on('connection', (conn) => handleIncomingConnection(conn));
-    peer.on('error', (err) => console.warn('Peer notice:', err.type));
+    peer.on('error', (err) => {
+      if (err.type !== 'peer-unavailable') {
+        console.log('Peer status:', err.type);
+      }
+    });
 
     peer.on('call', (call) => {
       if (!call || !call.peer) return;
