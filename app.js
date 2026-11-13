@@ -9,13 +9,23 @@ let replyContext = null;
 let typingTimeout = null;
 let pttEnabled = false;
 let isMuted = false;
+let renderTimer = null;
 
-// Screen Share Weekly Limit (10 minutes = 600 seconds)
-const SCREEN_LIMIT_SEC = 600;
+// Valid Gift Card Codes
+const VALID_GIFT_CODES = [
+  'PULSE-PRO-9X4K-2026',
+  'PULSE-VIP-7M2P-8841',
+  'PULSE-GOLD-5T9W-3310',
+  'PULSE-APEX-3R8L-6492',
+  'PULSE-ULTRA-1Q6Z-9075'
+];
+
+// Restricted Phrases -> Opens dedicated warning.html
+const BANNED_PHRASES = ['67', '6-7', '6 7'];
+
+const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 let screenShareTimer = null;
 let screenStream = null;
-
-// Voice Note Recording
 let mediaRecorder = null;
 let audioChunks = [];
 
@@ -24,6 +34,202 @@ const ringtoneAudio = new Audio(chrome.runtime.getURL('ringtone.mp3'));
 const callingAudio = new Audio(chrome.runtime.getURL('calling.mp3'));
 ringtoneAudio.loop = true;
 callingAudio.loop = true;
+
+function getState(keys, cb) { chrome.storage.local.get(keys, cb); }
+function setState(obj, cb) { chrome.storage.local.set(obj, cb); }
+
+// --- Pro & 3-Day Trial Checker ---
+function checkProAccess(cb) {
+  getState(['pulse_pro_permanent', 'pulse_trial_start'], (res) => {
+    if (res.pulse_pro_permanent) {
+      cb({ hasPro: true, statusText: 'Pulse Pro Active (Lifetime Gift Code)', isTrial: false });
+      return;
+    }
+    let trialStart = res.pulse_trial_start;
+    if (!trialStart) {
+      trialStart = Date.now();
+      setState({ pulse_trial_start: trialStart });
+    }
+    const elapsed = Date.now() - trialStart;
+    if (elapsed < THREE_DAYS_MS) {
+      const hoursLeft = Math.ceil((THREE_DAYS_MS - elapsed) / (1000 * 60 * 60));
+      cb({ hasPro: true, statusText: `3-Day Free Trial Active (${hoursLeft} hours remaining)`, isTrial: true });
+    } else {
+      cb({ hasPro: false, statusText: 'Free Trial Expired — Redeem a Gift Card Code to unlock Pro', isTrial: false });
+    }
+  });
+}
+
+function updateProUI() {
+  checkProAccess(({ hasPro, statusText, isTrial }) => {
+    const popBadge = document.getElementById('popProBadge');
+    const wsBadge = document.getElementById('wsProBadge');
+    if (popBadge) {
+      popBadge.style.display = hasPro ? 'inline-block' : 'none';
+      popBadge.textContent = isTrial ? 'PRO TRIAL' : 'PRO';
+    }
+    if (wsBadge) {
+      wsBadge.style.display = hasPro ? 'inline-block' : 'none';
+      wsBadge.textContent = isTrial ? 'PRO TRIAL' : 'PRO';
+    }
+
+    const descEl = document.getElementById('proStatusDesc');
+    const pillEl = document.getElementById('proStatusPill');
+    if (descEl) descEl.textContent = statusText;
+    if (pillEl) pillEl.textContent = hasPro ? (isTrial ? '3-DAY TRIAL' : 'PULSE PRO') : 'STANDARD TIER';
+
+    // Show or hide paywall screens on Pro setting cards
+    document.querySelectorAll('.pro-gate').forEach(gate => {
+      gate.style.display = hasPro ? 'none' : 'flex';
+    });
+
+    // Revert Pro theme automatically if trial expired
+    if (!hasPro) {
+      getState(['pulse_settings'], (res) => {
+        const s = res.pulse_settings || {};
+        if (s.theme === 'pro-obsidian' || s.bgImageUrl) {
+          s.theme = 'discord-dark';
+          s.bgImageUrl = '';
+          setState({ pulse_settings: s });
+        }
+      });
+    }
+
+    renderSoundboardSettings(hasPro);
+    renderCallSoundboard(hasPro);
+  });
+}
+
+// --- Custom Soundboard Uploader (3 Standard / 5 Pro) ---
+function renderSoundboardSettings(hasPro) {
+  const container = document.getElementById('soundboardSlotsContainer');
+  if (!container) return;
+  const maxSlots = hasPro ? 5 : 3;
+
+  getState(['pulse_custom_sounds'], (res) => {
+    const sounds = res.pulse_custom_sounds || [];
+    container.innerHTML = '';
+
+    for (let i = 0; i < 5; i++) {
+      const slotData = sounds[i];
+      const isLocked = i >= maxSlots;
+      const row = document.createElement('div');
+      row.className = 'setting-row';
+      row.style.position = 'relative';
+
+      if (isLocked) {
+        row.innerHTML = `
+          <div><strong>Slot ${i + 1} (Pulse Pro Exclusive)</strong><div style="font-size:0.78rem; color:#fbbf24;">Requires Pulse Pro to unlock slots 4 & 5</div></div>
+          <button onclick="document.querySelector('[data-sec=pro]').click()" style="background:#eab308; color:#000;">🔒 Upgrade</button>
+        `;
+      } else {
+        row.innerHTML = `
+          <div>
+            <strong>Slot ${i + 1}: ${slotData ? slotData.name : 'Empty Slot'}</strong>
+            <div style="font-size:0.75rem; color:var(--muted);">Upload MP3/WAV sound effect</div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            ${slotData ? `<button class="btn-sec" data-play-slot="${i}">▶️ Play</button><button class="btn-danger" data-del-slot="${i}">✕</button>` : ''}
+            <label style="background:var(--accent); color:#fff; padding:6px 12px; border-radius:8px; cursor:pointer; font-size:0.8rem; font-weight:700;">
+              Upload <input type="file" accept="audio/*" data-upload-slot="${i}" style="display:none;" />
+            </label>
+          </div>
+        `;
+      }
+      container.appendChild(row);
+    }
+
+    container.querySelectorAll('[data-play-slot]').forEach(btn => {
+      btn.onclick = () => {
+        const s = sounds[parseInt(btn.dataset.playSlot, 10)];
+        if (s && s.data) new Audio(s.data).play();
+      };
+    });
+
+    container.querySelectorAll('[data-del-slot]').forEach(btn => {
+      btn.onclick = () => {
+        sounds[parseInt(btn.dataset.delSlot, 10)] = null;
+        setState({ pulse_custom_sounds: sounds }, () => updateProUI());
+      };
+    });
+
+    container.querySelectorAll('[data-upload-slot]').forEach(inp => {
+      inp.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 1500000) return alert('Please keep sound files under 1.5 MB for fast performance.');
+        const reader = new FileReader();
+        reader.onload = () => {
+          sounds[parseInt(inp.dataset.uploadSlot, 10)] = {
+            name: file.name.replace(/\.[^/.]+$/, '').substring(0, 16),
+            data: reader.result
+          };
+          setState({ pulse_custom_sounds: sounds }, () => updateProUI());
+        };
+        reader.readAsDataURL(file);
+      };
+    });
+  });
+}
+
+function renderCallSoundboard(hasPro) {
+  const bar = document.getElementById('customSoundboardBar');
+  if (!bar) return;
+  const maxSlots = hasPro ? 5 : 3;
+
+  getState(['pulse_custom_sounds'], (res) => {
+    const sounds = res.pulse_custom_sounds || [];
+    bar.innerHTML = `<span style="font-size:0.75rem; color:#94a3b8;">Soundboard:</span>`;
+
+    // Built-in Horn + Custom Uploaded Slots
+    const defaultBtn = document.createElement('button');
+    defaultBtn.className = 'btn-sec';
+    defaultBtn.style.cssText = 'padding:4px 8px; font-size:0.75rem;';
+    defaultBtn.textContent = '🔔 Chime';
+    defaultBtn.onclick = () => playSound(chimeAudio);
+    bar.appendChild(defaultBtn);
+
+    for (let i = 0; i < maxSlots; i++) {
+      if (sounds[i] && sounds[i].data) {
+        const b = document.createElement('button');
+        b.className = 'btn-sec';
+        b.style.cssText = 'padding:4px 8px; font-size:0.75rem;';
+        b.textContent = `🔊 ${sounds[i].name}`;
+        b.onclick = () => new Audio(sounds[i].data).play();
+        bar.appendChild(b);
+      }
+    }
+  });
+}
+
+// --- Initialization & Debounced Renders (Zero Lag) ---
+function scheduleRefresh() {
+  if (renderTimer) cancelAnimationFrame(renderTimer);
+  renderTimer = requestAnimationFrame(() => refreshAllViews());
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadSettingsAndTheme();
+  updateProUI();
+  initPeerNetwork();
+  bindUIEvents();
+  deliverPendingInbox();
+  checkWeeklyScreenQuota();
+  populateMicrophones();
+  scheduleRefresh();
+
+  setInterval(connectToAllFriends, 30000);
+
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.pulse_settings || changes.pulse_custom_theme) loadSettingsAndTheme();
+    if (changes.pulse_pro_permanent || changes.pulse_trial_start) updateProUI();
+    if (changes.pulse_pending_inbox) deliverPendingInbox();
+    if (changes.pulse_friends || changes.pulse_groups || changes.pulse_requests || changes.pulse_history) {
+      scheduleRefresh();
+      flushOfflineQueue();
+    }
+  });
+});
 
 function playSound(audioObj) {
   getState(['pulse_settings'], (res) => {
@@ -43,70 +249,39 @@ function stopCallAudio() {
   callingAudio.currentTime = 0;
 }
 
-function getState(keys, cb) { chrome.storage.local.get(keys, cb); }
-function setState(obj, cb) { chrome.storage.local.set(obj, cb); }
-
-document.addEventListener('DOMContentLoaded', () => {
-  loadSettingsAndTheme();
-  initPeerNetwork();
-  bindUIEvents();
-  deliverPendingInbox();
-  checkWeeklyScreenQuota();
-  checkStorageAutoPrune();
-  refreshAllViews();
-
-  // Silent Auto-Reconnect every 30 seconds
-  setInterval(() => {
-    connectToAllFriends();
-  }, 30000);
-
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.pulse_settings) loadSettingsAndTheme();
-    if (changes.pulse_pending_inbox) deliverPendingInbox();
-    if (changes.pulse_friends || changes.pulse_groups || changes.pulse_requests || changes.pulse_history) {
-      refreshAllViews();
-      flushOfflineQueue();
-    }
-  });
-});
-
-// --- 10-Minute Weekly Screen Share Limit ---
+// --- Screen Share Quota (10m Standard / 30m Pro) ---
 function getWeekStartTimestamp() {
   const now = new Date();
-  const day = now.getDay();
-  const diff = now.getDate() - day;
+  const diff = now.getDate() - now.getDay();
   return new Date(now.setDate(diff)).setHours(0, 0, 0, 0);
 }
 
 function checkWeeklyScreenQuota(cb) {
-  getState(['pulse_screen_quota'], (res) => {
-    const weekStart = getWeekStartTimestamp();
-    let quota = res.pulse_screen_quota || { weekStart, usedSeconds: 0 };
-    if (quota.weekStart !== weekStart) {
-      quota = { weekStart, usedSeconds: 0 };
-      setState({ pulse_screen_quota: quota });
-    }
-    const rem = Math.max(0, SCREEN_LIMIT_SEC - quota.usedSeconds);
-    const mins = Math.floor(rem / 60);
-    const secs = String(rem % 60).padStart(2, '0');
-    const formatted = `${mins}:${secs}`;
+  checkProAccess(({ hasPro }) => {
+    const limitSec = hasPro ? 1800 : 600;
+    getState(['pulse_screen_quota'], (res) => {
+      const weekStart = getWeekStartTimestamp();
+      let quota = res.pulse_screen_quota || { weekStart, usedSeconds: 0 };
+      if (quota.weekStart !== weekStart) {
+        quota = { weekStart, usedSeconds: 0 };
+        setState({ pulse_screen_quota: quota });
+      }
+      const rem = Math.max(0, limitSec - quota.usedSeconds);
+      const mins = Math.floor(rem / 60);
+      const secs = String(rem % 60).padStart(2, '0');
+      const formatted = `${mins}:${secs}`;
 
-    if (document.getElementById('screenTimeLeft')) document.getElementById('screenTimeLeft').textContent = formatted;
-    if (document.getElementById('settingsScreenQuota')) document.getElementById('settingsScreenQuota').textContent = `${mins}m ${secs}s remaining this week`;
-    if (cb) cb(rem, quota);
+      if (document.getElementById('screenTimeLeft')) document.getElementById('screenTimeLeft').textContent = formatted;
+      if (document.getElementById('settingsScreenQuota')) document.getElementById('settingsScreenQuota').textContent = `${mins}m ${secs}s remaining this week`;
+      if (cb) cb(rem, quota);
+    });
   });
 }
 
 function toggleScreenShare() {
-  if (screenStream) {
-    stopScreenShare();
-    return;
-  }
+  if (screenStream) { stopScreenShare(); return; }
   checkWeeklyScreenQuota((rem, quota) => {
-    if (rem <= 0) {
-      alert('You have reached your 10-minute weekly screen share limit! It resets next week.');
-      return;
-    }
+    if (rem <= 0) return alert('Weekly screen share quota reached!');
     navigator.mediaDevices.getDisplayMedia({ video: true }).then((stream) => {
       screenStream = stream;
       document.getElementById('localVideo').srcObject = stream;
@@ -114,18 +289,11 @@ function toggleScreenShare() {
         const sender = currentCall.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
         if (sender) sender.replaceTrack(stream.getVideoTracks()[0]);
       }
-
       stream.getVideoTracks()[0].onended = stopScreenShare;
-
       screenShareTimer = setInterval(() => {
         quota.usedSeconds += 1;
         setState({ pulse_screen_quota: quota }, () => {
-          checkWeeklyScreenQuota((left) => {
-            if (left <= 0) {
-              stopScreenShare();
-              alert('Your 10-minute weekly screen share time has expired.');
-            }
-          });
+          checkWeeklyScreenQuota((left) => { if (left <= 0) stopScreenShare(); });
         });
       }, 1000);
     }).catch(() => {});
@@ -135,10 +303,7 @@ function toggleScreenShare() {
 function stopScreenShare() {
   if (screenShareTimer) clearInterval(screenShareTimer);
   screenShareTimer = null;
-  if (screenStream) {
-    screenStream.getTracks().forEach(t => t.stop());
-    screenStream = null;
-  }
+  if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
   if (localStream) {
     document.getElementById('localVideo').srcObject = localStream;
     if (currentCall && currentCall.peerConnection) {
@@ -148,27 +313,42 @@ function stopScreenShare() {
   }
 }
 
-// --- Auto-Prune at 80% Storage ---
-function checkStorageAutoPrune() {
-  if (!chrome.storage.local.getBytesInUse) return;
-  getState(['pulse_settings', 'pulse_history'], (res) => {
-    const s = res.pulse_settings || {};
-    if (s.autoPrune === false) return;
-    chrome.storage.local.getBytesInUse(null, (bytes) => {
-      const quotaBytes = chrome.storage.local.QUOTA_BYTES || 10485760;
-      if (bytes / quotaBytes > 0.80) {
-        const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-        const history = res.pulse_history || {};
-        Object.keys(history).forEach(chatId => {
-          history[chatId] = history[chatId].filter(m => m.time > thirtyDaysAgo);
-        });
-        setState({ pulse_history: history });
-      }
+// --- Microphone Enumeration & Calling ---
+function populateMicrophones() {
+  const sel = document.getElementById('micDeviceSelect');
+  if (!sel || !navigator.mediaDevices) return;
+  navigator.mediaDevices.enumerateDevices().then(devices => {
+    devices.filter(d => d.kind === 'audioinput').forEach((mic, idx) => {
+      const opt = document.createElement('option');
+      opt.value = mic.deviceId;
+      opt.textContent = mic.label || `Microphone ${idx + 1}`;
+      sel.appendChild(opt);
     });
+  }).catch(() => {});
+}
+
+function getMediaStreamWithFallback(cb) {
+  getState(['pulse_settings'], (res) => {
+    const s = res.pulse_settings || {};
+    const audioConstraints = {
+      echoCancellation: s.echo !== false,
+      noiseSuppression: s.noise !== false,
+      autoGainControl: s.agc !== false
+    };
+    if (s.micDeviceId) audioConstraints.deviceId = { exact: s.micDeviceId };
+
+    navigator.mediaDevices.getUserMedia({ video: true, audio: audioConstraints })
+      .then(stream => cb(stream))
+      .catch(() => {
+        // Fallback to audio-only if camera is missing or busy
+        navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraints })
+          .then(audioOnlyStream => cb(audioOnlyStream))
+          .catch(err => alert('Microphone blocked! Click the lock/camera icon in your Chrome address bar and allow Microphone access.'));
+      });
   });
 }
 
-// --- PeerJS Networking ---
+// --- PeerJS Networking (Unified Popup & Workspace Sync) ---
 function initPeerNetwork() {
   getState(['pulse_my_code'], (res) => {
     myCode = res.pulse_my_code;
@@ -182,16 +362,13 @@ function initPeerNetwork() {
     if (peer) peer.destroy();
     peer = new Peer(peerId);
 
-    peer.on('open', () => {
-      connectToAllFriends();
-    });
-
+    peer.on('open', () => connectToAllFriends());
     peer.on('connection', (conn) => handleIncomingConnection(conn));
 
     peer.on('call', (call) => {
       currentCall = call;
       playSound(ringtoneAudio);
-      const callerCode = extractCode(call.peer);
+      const callerCode = call.peer.replace(/^pulse-(ws|pop|bg)-/, '');
       if (IS_POPUP) {
         chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
       } else {
@@ -200,10 +377,6 @@ function initPeerNetwork() {
       }
     });
   });
-}
-
-function extractCode(fullPeerId) {
-  return fullPeerId.replace('pulse-pop-', '').replace('pulse-ws-', '').replace('pulse-bg-', '');
 }
 
 function connectToAllFriends() {
@@ -224,16 +397,12 @@ function connectToCode(targetCode) {
 }
 
 function handleIncomingConnection(conn) {
-  const senderCode = extractCode(conn.peer);
+  const senderCode = conn.peer.replace(/^pulse-(ws|pop|bg)-/, '');
 
   conn.on('open', () => {
     liveConns[conn.peer] = conn;
-    getState(['pulse_settings'], (res) => {
-      const act = (res.pulse_settings || {}).customActivity || '';
-      if (act) conn.send({ type: 'ACTIVITY_UPDATE', activity: act });
-    });
     flushOfflineQueue();
-    refreshAllViews();
+    scheduleRefresh();
   });
 
   conn.on('data', (payload) => {
@@ -243,30 +412,8 @@ function handleIncomingConnection(conn) {
       if (activeTarget && activeTarget.id === senderCode && document.getElementById('typingIndicator')) {
         document.getElementById('typingIndicator').textContent = `${senderCode} is typing...`;
         clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(() => {
-          document.getElementById('typingIndicator').textContent = '';
-        }, 2500);
+        typingTimeout = setTimeout(() => { document.getElementById('typingIndicator').textContent = ''; }, 2500);
       }
-      return;
-    }
-
-    if (payload.type === 'ACTIVITY_UPDATE') {
-      updateFriendActivity(senderCode, payload.activity);
-      return;
-    }
-
-    if (payload.type === 'EDIT_MSG') {
-      applyRemoteEdit(senderCode, payload.msgId, payload.newText);
-      return;
-    }
-
-    if (payload.type === 'DELETE_MSG') {
-      applyRemoteDelete(senderCode, payload.msgId);
-      return;
-    }
-
-    if (payload.type === 'POLL_VOTE') {
-      applyPollVote(payload.chatId, payload.msgId, payload.optIdx);
       return;
     }
 
@@ -286,7 +433,7 @@ function handleIncomingConnection(conn) {
         time: Date.now(),
         self: false
       });
-      notifyIfNotViewing(payload.groupId, `${payload.groupName} (${senderCode})`, payload.text || 'Sent media');
+      notifyIfNotViewing(payload.groupId, `${payload.groupName} (${senderCode})`, payload.text || 'Sent media', payload.msgId);
       return;
     }
 
@@ -311,7 +458,7 @@ function handleIncomingConnection(conn) {
             self: false
           });
           conn.send({ type: 'READ_ACK', msgId: payload.msgId });
-          notifyIfNotViewing(senderCode, senderCode, payload.text || 'Sent media');
+          notifyIfNotViewing(senderCode, senderCode, payload.text || 'Sent media', payload.msgId);
         }
       });
     }
@@ -323,18 +470,7 @@ function handleIncomingConnection(conn) {
 
   conn.on('close', () => {
     delete liveConns[conn.peer];
-    refreshAllViews();
-  });
-}
-
-function updateFriendActivity(code, activity) {
-  getState(['pulse_friends'], (res) => {
-    const friends = res.pulse_friends || [];
-    const f = friends.find(item => item.code === code);
-    if (f) {
-      f.activity = activity;
-      setState({ pulse_friends: friends });
-    }
+    scheduleRefresh();
   });
 }
 
@@ -348,26 +484,17 @@ function deliverPendingInbox() {
     const requests = res.pulse_requests || [];
 
     pending.forEach(item => {
-      const isFriend = friends.some(f => f.code === item.senderCode);
-      if (!isFriend) {
-        if (!requests.some(r => r.code === item.senderCode && r.type === 'message')) {
-          requests.push({ type: 'message', code: item.senderCode, text: item.text });
-        }
+      if (!friends.some(f => f.code === item.senderCode)) {
+        requests.push({ type: 'message', code: item.senderCode, text: item.text });
       } else {
         if (!history[item.senderCode]) history[item.senderCode] = [];
-        history[item.senderCode].push({
-          id: item.msgId,
-          sender: item.senderCode,
-          text: item.text,
-          time: item.time,
-          self: false
-        });
-        sendPayloadToCode(item.senderCode, { type: 'READ_ACK', msgId: item.msgId });
+        if (!history[item.senderCode].some(m => m.id === item.msgId)) {
+          history[item.senderCode].push({ id: item.msgId, sender: item.senderCode, text: item.text, time: item.time, self: false });
+        }
       }
     });
 
-    playSound(chimeAudio);
-    setState({ pulse_pending_inbox: [], pulse_history: history, pulse_requests: requests }, refreshAllViews);
+    setState({ pulse_pending_inbox: [], pulse_history: history, pulse_requests: requests }, scheduleRefresh);
   });
 }
 
@@ -377,9 +504,10 @@ function sendPayloadToCode(targetCode, payload) {
   const bgConn = liveConns[`pulse-bg-${targetCode}`];
   let sent = false;
 
+  // Send only once to active Workspace or Popup to avoid duplicate messages
   if (wsConn && wsConn.open) { wsConn.send(payload); sent = true; }
-  if (popConn && popConn.open) { popConn.send(payload); sent = true; }
-  if (!sent && bgConn && bgConn.open) { bgConn.send(payload); sent = true; }
+  else if (popConn && popConn.open) { popConn.send(payload); sent = true; }
+  else if (bgConn && bgConn.open) { bgConn.send(payload); sent = true; }
 
   if (!sent && payload.type !== 'TYPING') {
     getState(['pulse_outbox'], (res) => {
@@ -396,17 +524,9 @@ function flushOfflineQueue() {
   getState(['pulse_outbox'], (res) => {
     const outbox = res.pulse_outbox || [];
     if (outbox.length === 0) return;
-
     const remaining = [];
     outbox.forEach(item => {
-      const wsConn = liveConns[`pulse-ws-${item.targetCode}`];
-      const popConn = liveConns[`pulse-pop-${item.targetCode}`];
-      const bgConn = liveConns[`pulse-bg-${item.targetCode}`];
-
-      if ((wsConn && wsConn.open) || (popConn && popConn.open) || (bgConn && bgConn.open)) {
-        if (wsConn && wsConn.open) wsConn.send(item.payload);
-        else if (popConn && popConn.open) popConn.send(item.payload);
-        else if (bgConn && bgConn.open) bgConn.send(item.payload);
+      if (sendPayloadToCode(item.targetCode, item.payload)) {
         markMessageDelivered(item.targetCode, item.payload.msgId);
       } else {
         remaining.push(item);
@@ -416,62 +536,14 @@ function flushOfflineQueue() {
   });
 }
 
-// --- Message Formatting (Links & YouTube Embeds) ---
-function formatMessageContent(rawText) {
-  if (!rawText) return '';
-  let escaped = rawText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  
-  const ytRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
-  const ytMatch = escaped.match(ytRegex);
-  let embedHtml = '';
-  if (ytMatch && ytMatch[1]) {
-    embedHtml = `<div style="margin-top:6px;"><iframe width="240" height="135" src="https://www.youtube.com/embed/${ytMatch[1]}" frameborder="0" allowfullscreen style="border-radius:8px;"></iframe></div>`;
-  }
-
-  escaped = escaped.replace(/(https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" style="color:#38bdf8; text-decoration:underline;">$1</a>');
-  return escaped + embedHtml;
-}
-
-// --- History & Edits ---
 function saveMessageToHistory(chatId, msgObj) {
   getState(['pulse_history'], (res) => {
     const history = res.pulse_history || {};
     if (!history[chatId]) history[chatId] = [];
-    history[chatId].push(msgObj);
-    setState({ pulse_history: history });
-  });
-}
-
-function applyRemoteEdit(chatId, msgId, newText) {
-  getState(['pulse_history'], (res) => {
-    const history = res.pulse_history || {};
-    if (history[chatId]) {
-      const m = history[chatId].find(item => item.id === msgId);
-      if (m) { m.text = newText; m.edited = true; }
+    // Deduplicate by msgId so popup + workspace never double-save
+    if (!history[chatId].some(m => m.id === msgObj.id)) {
+      history[chatId].push(msgObj);
       setState({ pulse_history: history });
-    }
-  });
-}
-
-function applyRemoteDelete(chatId, msgId) {
-  getState(['pulse_history'], (res) => {
-    const history = res.pulse_history || {};
-    if (history[chatId]) {
-      history[chatId] = history[chatId].filter(item => item.id !== msgId);
-      setState({ pulse_history: history });
-    }
-  });
-}
-
-function applyPollVote(chatId, msgId, optIdx) {
-  getState(['pulse_history'], (res) => {
-    const history = res.pulse_history || {};
-    if (history[chatId]) {
-      const m = history[chatId].find(item => item.id === msgId);
-      if (m && m.poll && m.poll.options[optIdx]) {
-        m.poll.options[optIdx].votes += 1;
-        setState({ pulse_history: history });
-      }
     }
   });
 }
@@ -509,15 +581,16 @@ function addRequest(reqObj) {
   });
 }
 
-function notifyIfNotViewing(chatId, title, text) {
+function notifyIfNotViewing(chatId, title, text, msgId) {
   const isViewing = document.hasFocus() && activeTarget && activeTarget.id === chatId;
-  if (!isViewing) {
+  if (!isViewing && !IS_POPUP) {
     playSound(chimeAudio);
     chrome.runtime.sendMessage({
       type: 'NEW_MESSAGE_NOTIFICATION',
       senderCode: chatId,
       senderName: title,
-      text: text
+      text: text,
+      msgId
     });
   }
 }
@@ -549,7 +622,6 @@ function refreshAllViews() {
     }
 
     renderActiveChat(history);
-    updateStorageStats();
   });
 }
 
@@ -571,14 +643,14 @@ function renderList(containerId, items, type) {
     el.innerHTML = `
       <div>
         <div style="font-weight:700;">${type === 'group' ? '# ' : ''}${item.name}</div>
-        <div style="font-size:0.72rem; color:var(--muted);">${type === 'dm' ? (item.activity || `Code: ${id}`) : `${item.members.length} members`}</div>
+        <div style="font-size:0.72rem; color:var(--muted);">${type === 'dm' ? `Code: ${id}` : `${item.members.length} members`}</div>
       </div>
       ${type === 'dm' ? `<span style="color:${isOnline ? '#10b981' : '#64748b'};">●</span>` : ''}
     `;
     el.onclick = () => {
-      activeTarget = { type, id, name: item.name, members: item.members, note: item.note };
+      activeTarget = { type, id, name: item.name, members: item.members };
       if (IS_POPUP) switchPopupTab('chats');
-      refreshAllViews();
+      scheduleRefresh();
     };
     container.appendChild(el);
   });
@@ -601,50 +673,29 @@ function renderRequestsList(containerId, requests) {
     el.style.alignItems = 'flex-start';
     el.style.gap = '8px';
     el.innerHTML = `
-      <div>
-        <span style="font-size:0.7rem; background:var(--accent); color:#fff; padding:2px 6px; border-radius:4px;">${req.type.toUpperCase()}</span>
-        <strong style="margin-left:6px;">${req.code}</strong>
-        ${req.text ? `<div style="font-size:0.8rem; color:var(--muted); margin-top:4px;">"${req.text}"</div>` : ''}
-      </div>
+      <div><strong>${req.code}</strong> ${req.text ? `<div style="font-size:0.8rem; color:var(--muted);">"${req.text}"</div>` : ''}</div>
       <div style="display:flex; gap:6px; width:100%;">
         <button class="btn-success" style="flex:1;" data-accept="${idx}">Accept</button>
         <button class="btn-danger" style="flex:1;" data-decline="${idx}">Decline</button>
       </div>
     `;
-    el.querySelector('[data-accept]').onclick = () => acceptRequest(idx);
-    el.querySelector('[data-decline]').onclick = () => declineRequest(idx);
+    el.querySelector('[data-accept]').onclick = () => {
+      getState(['pulse_requests', 'pulse_friends'], (res) => {
+        const reqs = res.pulse_requests || [];
+        const friends = res.pulse_friends || [];
+        if (!friends.some(f => f.code === req.code)) friends.push({ code: req.code, name: req.code });
+        reqs.splice(idx, 1);
+        setState({ pulse_requests: reqs, pulse_friends: friends }, () => { connectToCode(req.code); scheduleRefresh(); });
+      });
+    };
+    el.querySelector('[data-decline]').onclick = () => {
+      getState(['pulse_requests'], (res) => {
+        const reqs = res.pulse_requests || [];
+        reqs.splice(idx, 1);
+        setState({ pulse_requests: reqs }, scheduleRefresh);
+      });
+    };
     container.appendChild(el);
-  });
-}
-
-function acceptRequest(idx) {
-  getState(['pulse_requests', 'pulse_friends', 'pulse_history'], (res) => {
-    const reqs = res.pulse_requests || [];
-    const friends = res.pulse_friends || [];
-    const history = res.pulse_history || {};
-    const req = reqs[idx];
-
-    if (req && !friends.some(f => f.code === req.code)) {
-      friends.push({ code: req.code, name: req.name || req.code });
-    }
-    if (req && req.text) {
-      if (!history[req.code]) history[req.code] = [];
-      history[req.code].push({ id: 'msg-' + Date.now(), sender: req.code, text: req.text, time: Date.now(), self: false });
-    }
-
-    reqs.splice(idx, 1);
-    setState({ pulse_requests: reqs, pulse_friends: friends, pulse_history: history }, () => {
-      connectToCode(req.code);
-      refreshAllViews();
-    });
-  });
-}
-
-function declineRequest(idx) {
-  getState(['pulse_requests'], (res) => {
-    const reqs = res.pulse_requests || [];
-    reqs.splice(idx, 1);
-    setState({ pulse_requests: reqs }, refreshAllViews);
   });
 }
 
@@ -652,135 +703,59 @@ function renderActiveChat(history) {
   const titleEl = document.getElementById('activeChatTitle');
   const box = document.getElementById('messagesBox');
   const callBtn = document.getElementById('wsCallBtn') || document.getElementById('popupCallBtn');
-  const notesBtn = document.getElementById('friendNotesBtn');
-  const searchVal = (document.getElementById('chatSearchInput')?.value || '').toLowerCase();
 
   if (!activeTarget) {
     titleEl.textContent = 'Select a Friend or Group';
     box.innerHTML = '';
     if (callBtn) callBtn.style.display = 'none';
-    if (notesBtn) notesBtn.style.display = 'none';
     return;
   }
 
   titleEl.textContent = `${activeTarget.type === 'group' ? '# ' : ''}${activeTarget.name}`;
   if (callBtn) callBtn.style.display = activeTarget.type === 'dm' ? 'inline-block' : 'none';
-  if (notesBtn) notesBtn.style.display = activeTarget.type === 'dm' ? 'inline-block' : 'none';
-
-  let msgs = history[activeTarget.id] || [];
-  if (searchVal) {
-    msgs = msgs.filter(m => (m.text || '').toLowerCase().includes(searchVal));
-  }
-
-  box.innerHTML = '';
 
   getState(['pulse_settings'], (res) => {
     const s = res.pulse_settings || {};
-    const showReceipts = s.receipts !== false;
-    const use24h = s.timeFormat === '24h';
+    const limit = parseInt(s.renderLimit || '150', 10);
+    const msgs = (history[activeTarget.id] || []).slice(-limit);
+    box.innerHTML = '';
 
     msgs.forEach(m => {
       const div = document.createElement('div');
       div.className = `message ${m.self ? 'sent' : 'received'}`;
-      const timeStr = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: !use24h });
-      const statusHtml = (m.self && showReceipts && m.status) ? `<span>${m.status === 'Queued' ? '🕒 Queued' : m.status === 'Read' ? '✓✓ Read' : '✓ Sent'}</span>` : '';
+      const timeStr = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: s.timeFormat !== '24h' });
+      const statusHtml = (m.self && s.receipts !== false && m.status) ? `<span>${m.status === 'Queued' ? '🕒' : m.status === 'Read' ? '✓✓' : '✓'}</span>` : '';
       
-      let bodyHtml = '';
-      if (m.replyTo) {
-        bodyHtml += `<div class="reply-quote">Replying to <strong>${m.replyTo.sender}</strong>: ${m.replyTo.text}</div>`;
-      }
-      if (m.audioData) {
-        bodyHtml += `<audio controls src="${m.audioData}" style="max-width:210px; height:32px; margin-top:4px;"></audio>`;
-      } else if (m.poll) {
-        bodyHtml += `<div class="poll-card"><strong>📊 ${m.poll.question}</strong>`;
-        m.poll.options.forEach((opt, oIdx) => {
-          bodyHtml += `<div class="poll-opt" data-poll-msg="${m.id}" data-opt="${oIdx}"><span>${opt.label}</span><strong>${opt.votes} votes</strong></div>`;
-        });
-        bodyHtml += `</div>`;
-      } else {
-        bodyHtml += `<div>${formatMessageContent(m.text)} ${m.edited ? '<span style="font-size:0.7rem; opacity:0.7;">(edited)</span>' : ''}</div>`;
-      }
-
-      div.innerHTML = `
-        <div class="msg-actions">
-          <button class="msg-act-btn" data-reply="${m.id}">↩️</button>
-          ${m.self && !m.audioData && !m.poll ? `<button class="msg-act-btn" data-edit="${m.id}">✏️</button><button class="msg-act-btn" data-del="${m.id}">🗑️</button>` : ''}
-        </div>
-        ${!m.self && activeTarget.type === 'group' ? `<div style="font-size:0.7rem; font-weight:700; color:var(--accent); margin-bottom:2px;">${m.sender}</div>` : ''}
-        ${bodyHtml}
-        <div class="msg-meta"><span>${timeStr}</span>${statusHtml}</div>
-      `;
-
-      div.querySelector('[data-reply]').onclick = () => {
-        replyContext = { sender: m.self ? 'You' : m.sender, text: (m.text || 'Media').substring(0, 50) };
-        document.getElementById('replyPreviewText').textContent = `Replying to ${replyContext.sender}: "${replyContext.text}"`;
-        document.getElementById('replyBanner').style.display = 'flex';
-        document.getElementById('msgInput').focus();
-      };
-
-      const editBtn = div.querySelector('[data-edit]');
-      if (editBtn) {
-        editBtn.onclick = () => {
-          const updated = prompt('Edit message:', m.text);
-          if (updated && updated.trim()) {
-            applyRemoteEdit(activeTarget.id, m.id, updated.trim());
-            if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'EDIT_MSG', msgId: m.id, newText: updated.trim() });
-          }
-        };
-      }
-
-      const delBtn = div.querySelector('[data-del]');
-      if (delBtn) {
-        delBtn.onclick = () => {
-          applyRemoteDelete(activeTarget.id, m.id);
-          if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'DELETE_MSG', msgId: m.id });
-        };
-      }
-
-      div.querySelectorAll('.poll-opt').forEach(optEl => {
-        optEl.onclick = () => {
-          const oIdx = parseInt(optEl.dataset.opt, 10);
-          applyPollVote(activeTarget.id, m.id, oIdx);
-          if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'POLL_VOTE', chatId: activeTarget.id, msgId: m.id, optIdx: oIdx });
-          else if (activeTarget.type === 'group') {
-            (activeTarget.members || []).forEach(mc => {
-              if (mc !== myCode) sendPayloadToCode(mc, { type: 'POLL_VOTE', chatId: activeTarget.id, msgId: m.id, optIdx: oIdx });
-            });
-          }
-        };
-      });
-
+      let body = m.audioData ? `<audio controls src="${m.audioData}" style="max-width:200px; height:30px;"></audio>` : (m.text || '');
+      div.innerHTML = `<div>${body}</div><div class="msg-meta"><span>${timeStr}</span>${statusHtml}</div>`;
       box.appendChild(div);
     });
     box.scrollTop = box.scrollHeight;
   });
 }
 
-// --- Sending Messages & Polls ---
+// --- Sending Messages + Restricted Phrase Check (warning.html) ---
 function handleSendMessage(extraPayload = {}) {
   const input = document.getElementById('msgInput');
   const text = input ? input.value.trim() : '';
-  if (!text && !extraPayload.poll && !extraPayload.audioData) return;
+  if (!text && !extraPayload.audioData) return;
   if (!activeTarget) return;
 
-  if (text.startsWith('/poll ')) {
-    const matches = text.match(/"([^"]+)"/g);
-    if (matches && matches.length >= 3) {
-      const clean = matches.map(s => s.replace(/"/g, ''));
-      extraPayload.poll = {
-        question: clean[0],
-        options: clean.slice(1).map(label => ({ label, votes: 0 }))
-      };
-    }
+  // Check for banned phrases ("67", "6-7", "6 7")
+  const matchedBan = BANNED_PHRASES.find(phrase => text.includes(phrase));
+  if (matchedBan) {
+    if (input) input.value = '';
+    chrome.tabs.create({
+      url: chrome.runtime.getURL(`warning.html?term=${encodeURIComponent(matchedBan)}`)
+    });
+    return;
   }
 
-  const msgId = 'msg-' + Date.now();
+  const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
   const msgObj = {
     id: msgId,
     sender: myCode,
-    text: extraPayload.poll ? '' : text,
-    replyTo: replyContext,
-    poll: extraPayload.poll || null,
+    text,
     audioData: extraPayload.audioData || null,
     time: Date.now(),
     self: true,
@@ -788,85 +763,30 @@ function handleSendMessage(extraPayload = {}) {
   };
 
   if (activeTarget.type === 'dm') {
-    const sent = sendPayloadToCode(activeTarget.id, {
-      type: 'DM',
-      msgId,
-      text: msgObj.text,
-      replyTo: replyContext,
-      poll: msgObj.poll,
-      audioData: msgObj.audioData
-    });
+    const sent = sendPayloadToCode(activeTarget.id, { type: 'DM', msgId, text, audioData: msgObj.audioData });
     msgObj.status = sent ? 'Sent' : 'Queued';
     saveMessageToHistory(activeTarget.id, msgObj);
   } else if (activeTarget.type === 'group') {
     msgObj.sender = 'You';
     saveMessageToHistory(activeTarget.id, msgObj);
-    (activeTarget.members || []).forEach(memberCode => {
-      if (memberCode !== myCode) {
-        sendPayloadToCode(memberCode, {
-          type: 'GROUP_MSG',
-          msgId,
-          groupId: activeTarget.id,
-          groupName: activeTarget.name,
-          senderName: myCode,
-          text: msgObj.text,
-          replyTo: replyContext,
-          poll: msgObj.poll,
-          audioData: msgObj.audioData
-        });
-      }
+    (activeTarget.members || []).forEach(mc => {
+      if (mc !== myCode) sendPayloadToCode(mc, { type: 'GROUP_MSG', msgId, groupId: activeTarget.id, groupName: activeTarget.name, senderName: myCode, text });
     });
   }
 
-  replyContext = null;
-  if (document.getElementById('replyBanner')) document.getElementById('replyBanner').style.display = 'none';
   if (input) input.value = '';
 }
 
-// --- Settings & UI Events ---
 function loadSettingsAndTheme() {
   getState(['pulse_settings', 'pulse_custom_theme'], (res) => {
     const s = res.pulse_settings || {};
     const theme = s.theme || 'discord-dark';
     document.documentElement.setAttribute('data-theme', theme);
-
-    if (theme === 'custom' && res.pulse_custom_theme) {
-      const c = res.pulse_custom_theme;
-      document.documentElement.style.setProperty('--bg-dark', c.bg);
-      document.documentElement.style.setProperty('--bg-panel', c.bg);
-      document.documentElement.style.setProperty('--accent', c.accent);
-      document.documentElement.style.setProperty('--sent', c.accent);
-      document.documentElement.style.setProperty('--text', c.text);
-    } else {
-      ['--bg-dark', '--bg-panel', '--accent', '--sent', '--text'].forEach(p => document.documentElement.style.removeProperty(p));
-    }
-
-    document.body.style.setProperty('--font-size', s.fontSize || (IS_POPUP ? '14px' : '15px'));
-    document.body.classList.toggle('high-contrast', !!s.highContrast);
-    document.body.classList.toggle('compact', !!s.compact);
-    document.body.classList.toggle('reduced-motion', !!s.reducedMotion);
-
+    document.body.style.fontFamily = s.fontFamily || 'system-ui, sans-serif';
+    document.body.style.setProperty('--font-size', s.fontSize || '15px');
+    document.body.classList.toggle('no-animations', !!s.noAnimations);
     if (document.getElementById('footerDisplayName')) document.getElementById('footerDisplayName').textContent = s.displayName || 'User';
     if (document.getElementById('footerCustomActivity')) document.getElementById('footerCustomActivity').textContent = s.customActivity || 'Ready to chat';
-    if (document.getElementById('setDisplayName')) document.getElementById('setDisplayName').value = s.displayName || '';
-    if (document.getElementById('setCustomActivity')) document.getElementById('setCustomActivity').value = s.customActivity || '';
-    if (document.getElementById('themeSelect')) {
-      document.getElementById('themeSelect').value = theme;
-      document.getElementById('customThemeBox').style.display = theme === 'custom' ? 'flex' : 'none';
-    }
-    if (document.getElementById('setOnlineStatus')) document.getElementById('setOnlineStatus').value = s.status || 'online';
-    if (document.getElementById('setDmFilter')) document.getElementById('setDmFilter').value = s.dmFilter || 'requests';
-    if (document.getElementById('setReceipts')) document.getElementById('setReceipts').checked = s.receipts !== false;
-    if (document.getElementById('setAutoPrune')) document.getElementById('setAutoPrune').checked = s.autoPrune !== false;
-    if (document.getElementById('setNotif')) document.getElementById('setNotif').checked = s.notifications !== false;
-    if (document.getElementById('setSound')) document.getElementById('setSound').checked = s.sound !== false;
-    if (document.getElementById('setVolume')) document.getElementById('setVolume').value = s.volume !== undefined ? s.volume : 1;
-    if (document.getElementById('setFontSize')) document.getElementById('setFontSize').value = s.fontSize || (IS_POPUP ? '14px' : '15px');
-    if (document.getElementById('setHighContrast')) document.getElementById('setHighContrast').checked = !!s.highContrast;
-    if (document.getElementById('setCompact')) document.getElementById('setCompact').checked = !!s.compact;
-    if (document.getElementById('setReducedMotion')) document.getElementById('setReducedMotion').checked = !!s.reducedMotion;
-    if (document.getElementById('setEnterSend')) document.getElementById('setEnterSend').checked = s.enterSend !== false;
-    if (document.getElementById('setTimeFormat')) document.getElementById('setTimeFormat').value = s.timeFormat || '12h';
   });
 }
 
@@ -878,15 +798,6 @@ function updateSetting(key, val) {
   });
 }
 
-function updateStorageStats() {
-  const el = document.getElementById('storageStats');
-  if (!el || !chrome.storage.local.getBytesInUse) return;
-  chrome.storage.local.getBytesInUse(null, (bytes) => {
-    const kb = (bytes / 1024).toFixed(1);
-    el.textContent = `Storage Used: ${kb} KB`;
-  });
-}
-
 function switchPopupTab(tabName) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${tabName}`));
@@ -894,22 +805,16 @@ function switchPopupTab(tabName) {
 
 function bindUIEvents() {
   if (IS_POPUP) {
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.onclick = () => switchPopupTab(btn.dataset.tab);
-    });
-    document.getElementById('openWorkspaceBtn').onclick = () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
-    };
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => switchPopupTab(btn.dataset.tab));
+    document.getElementById('openWorkspaceBtn').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
     document.getElementById('addFriendBtn').onclick = promptAddFriend;
     document.getElementById('createGroupBtn').onclick = promptCreateGroup;
-    document.getElementById('popupCallBtn').onclick = () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
-    };
+    document.getElementById('popupCallBtn').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
   } else {
     document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
     document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP CHANNELS', '+ Group', promptCreateGroup);
     document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
-    document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; };
+    document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
     document.getElementById('closeSettingsBtn').onclick = () => { document.getElementById('settingsOverlay').style.display = 'none'; };
     document.getElementById('sidebarActionBtn').onclick = promptAddFriend;
 
@@ -922,40 +827,36 @@ function bindUIEvents() {
       };
     });
 
-    document.getElementById('settingsSearchInput').oninput = (e) => {
-      const q = e.target.value.toLowerCase();
-      document.querySelectorAll('.settings-section').forEach(sec => {
-        if (!q) {
-          sec.style.display = sec.classList.contains('active') ? 'flex' : 'none';
-          return;
-        }
-        sec.style.display = sec.textContent.toLowerCase().includes(q) ? 'flex' : 'none';
-      });
-    };
-
-    document.getElementById('friendNotesBtn').onclick = () => {
-      if (!activeTarget || activeTarget.type !== 'dm') return;
-      getState(['pulse_friends'], (res) => {
-        const friends = res.pulse_friends || [];
-        const f = friends.find(item => item.code === activeTarget.id);
-        if (!f) return;
-        const newName = prompt('Nickname for ' + f.code + ':', f.name);
-        if (newName) f.name = newName.trim();
-        const newNote = prompt('Private profile note:', f.note || '');
-        if (newNote !== null) f.note = newNote.trim();
-        setState({ pulse_friends: friends }, () => {
-          activeTarget.name = f.name;
-          refreshAllViews();
+    // Gift Card Code Redemption
+    document.getElementById('redeemCodeBtn').onclick = () => {
+      const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
+      if (VALID_GIFT_CODES.includes(code)) {
+        setState({ pulse_pro_permanent: true }, () => {
+          alert('🎉 Gift Card Redeemed! Pulse Pro is now permanently unlocked!');
+          updateProUI();
         });
-      });
+      } else {
+        alert('Invalid Gift Card Code. Please check the code and try again.');
+      }
     };
 
-    document.getElementById('chatSearchInput').oninput = () => refreshAllViews();
+    document.getElementById('applyProThemeBtn').onclick = () => updateSetting('theme', 'pro-obsidian');
+
+    // Test Mic Live Button
+    document.getElementById('testMicBtn').onclick = () => {
+      const status = document.getElementById('micTestStatus');
+      status.textContent = 'Requesting microphone access...';
+      getMediaStreamWithFallback((stream) => {
+        status.textContent = '✅ Microphone working! Audio stream active.';
+        status.style.color = '#10b981';
+        stream.getTracks().forEach(t => t.stop());
+      });
+    };
 
     document.getElementById('wsCallBtn').onclick = () => {
       if (!activeTarget || activeTarget.type !== 'dm') return;
       playSound(callingAudio);
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+      getMediaStreamWithFallback((stream) => {
         localStream = stream;
         document.getElementById('localVideo').srcObject = stream;
         document.getElementById('mediaArea').style.display = 'flex';
@@ -963,9 +864,6 @@ function bindUIEvents() {
         currentCall = call;
         call.on('stream', (rem) => { stopCallAudio(); document.getElementById('remoteVideo').srcObject = rem; });
         call.on('close', endActiveCall);
-      }).catch(() => {
-        stopCallAudio();
-        alert('Camera/Microphone access denied.');
       });
     };
 
@@ -973,7 +871,7 @@ function bindUIEvents() {
       stopCallAudio();
       document.getElementById('callModal').style.display = 'none';
       if (!currentCall) return;
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+      getMediaStreamWithFallback((stream) => {
         localStream = stream;
         document.getElementById('localVideo').srcObject = stream;
         document.getElementById('mediaArea').style.display = 'flex';
@@ -983,12 +881,7 @@ function bindUIEvents() {
       });
     };
 
-    document.getElementById('declineCallBtn').onclick = () => {
-      stopCallAudio();
-      document.getElementById('callModal').style.display = 'none';
-      if (currentCall) currentCall.close();
-    };
-
+    document.getElementById('declineCallBtn').onclick = () => { stopCallAudio(); document.getElementById('callModal').style.display = 'none'; if (currentCall) currentCall.close(); };
     document.getElementById('endCallBtn').onclick = endActiveCall;
     document.getElementById('shareScreenBtn').onclick = toggleScreenShare;
 
@@ -998,157 +891,33 @@ function bindUIEvents() {
       e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
     };
 
-    document.getElementById('pttToggleBtn').onclick = (e) => {
-      pttEnabled = !pttEnabled;
-      e.target.textContent = `Walkie PTT: ${pttEnabled ? 'ON (Hold Space)' : 'OFF'}`;
-      if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !pttEnabled);
+    // Settings Bindings
+    document.getElementById('saveDisplayNameBtn').onclick = () => updateSetting('displayName', document.getElementById('setDisplayName').value.trim() || 'User');
+    document.getElementById('saveActivityBtn').onclick = () => updateSetting('customActivity', document.getElementById('setCustomActivity').value.trim());
+    document.getElementById('applyRecoverCodeBtn').onclick = () => {
+      const c = document.getElementById('recoverCodeInput').value.trim().toUpperCase();
+      if (c.length === 4) setState({ pulse_my_code: c }, () => { initPeerNetwork(); alert('Code restored!'); });
     };
-
-    window.addEventListener('keydown', (e) => {
-      if (pttEnabled && e.code === 'Space' && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'INPUT') {
-        if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = true);
-      }
-    });
-    window.addEventListener('keyup', (e) => {
-      if (pttEnabled && e.code === 'Space') {
-        if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = false);
-      }
-    });
-
-    document.querySelectorAll('.sb-btn').forEach(btn => {
-      btn.onclick = () => {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.frequency.value = parseFloat(btn.dataset.freq);
-        gain.gain.setValueAtTime(0.2, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.5);
-      };
-    });
+    document.getElementById('themeSelect').onchange = (e) => updateSetting('theme', e.target.value);
+    document.getElementById('setNoAnimations').onchange = (e) => updateSetting('noAnimations', e.target.checked);
+    document.getElementById('setRenderLimit').onchange = (e) => updateSetting('renderLimit', e.target.value);
+    document.getElementById('micDeviceSelect').onchange = (e) => updateSetting('micDeviceId', e.target.value);
+    document.getElementById('setEcho').onchange = (e) => updateSetting('echo', e.target.checked);
+    document.getElementById('setNoise').onchange = (e) => updateSetting('noise', e.target.checked);
+    document.getElementById('setAgc').onchange = (e) => updateSetting('agc', e.target.checked);
+    document.getElementById('setFontFamily').onchange = (e) => updateSetting('fontFamily', e.target.value);
+    document.getElementById('setFontSize').onchange = (e) => updateSetting('fontSize', e.target.value);
+    document.getElementById('clearHistoryBtn').onclick = () => { if (confirm('Clear all history?')) setState({ pulse_history: {} }); };
   }
 
-  // Shared Controls (Both Popup & Workspace)
-  document.getElementById('copyCodeBtn').onclick = () => {
-    navigator.clipboard.writeText(myCode);
-    alert('Copied Peer Code: ' + myCode);
-  };
-
-  document.getElementById('copyInviteBtn').onclick = () => {
-    const link = `pulse://add/${myCode}`;
-    navigator.clipboard.writeText(link);
-    alert(`Copied 1-Click Invite Link: ${link}`);
-  };
-
+  document.getElementById('copyCodeBtn').onclick = () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); };
   document.getElementById('quickJoinBtn').onclick = () => {
-    const link = prompt('Paste Invite Link (e.g. pulse://add/4A9F):');
-    if (!link) return;
-    const code = link.replace('pulse://add/', '').trim().toUpperCase().substring(0, 4);
-    if (code) addFriendByCode(code, code);
+    const link = prompt('Paste Invite Link or 4-Digit Code:');
+    if (link) addFriendByCode(link.replace('pulse://add/', '').trim().toUpperCase().substring(0, 4), link.trim().toUpperCase().substring(0, 4));
   };
-
-  document.getElementById('createPollBtn').onclick = () => {
-    const q = prompt('Poll Question:');
-    if (!q) return;
-    const opts = prompt('Options (comma separated, e.g. Yes, No, Maybe):');
-    if (!opts) return;
-    const options = opts.split(',').map(o => ({ label: o.trim(), votes: 0 })).filter(o => o.label);
-    if (options.length < 2) return alert('Enter at least 2 options.');
-    handleSendMessage({ poll: { question: q, options } });
-  };
-
-  const vnBtn = document.getElementById('voiceNoteBtn');
-  vnBtn.onmousedown = () => {
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-      audioChunks = [];
-      mediaRecorder = new MediaRecorder(stream);
-      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunks, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.onloadend = () => handleSendMessage({ audioData: reader.result });
-        reader.readAsDataURL(blob);
-        stream.getTracks().forEach(t => t.stop());
-      };
-      mediaRecorder.start();
-      vnBtn.style.background = '#ef4444';
-    }).catch(() => alert('Microphone access denied.'));
-  };
-  vnBtn.onmouseup = () => {
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      mediaRecorder.stop();
-      vnBtn.style.background = '';
-    }
-  };
-
-  document.getElementById('msgInput').oninput = () => {
-    if (activeTarget && activeTarget.type === 'dm') {
-      sendPayloadToCode(activeTarget.id, { type: 'TYPING' });
-    }
-  };
-
-  document.getElementById('cancelReplyBtn').onclick = () => {
-    replyContext = null;
-    document.getElementById('replyBanner').style.display = 'none';
-  };
-
   document.getElementById('sendBtn').onclick = () => handleSendMessage();
   document.getElementById('msgInput').onkeydown = (e) => {
-    getState(['pulse_settings'], (res) => {
-      const enterSend = (res.pulse_settings || {}).enterSend !== false;
-      if (enterSend && e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleSendMessage();
-      }
-    });
-  };
-
-  // Settings Bindings
-  document.getElementById('saveDisplayNameBtn').onclick = () => updateSetting('displayName', document.getElementById('setDisplayName').value.trim() || 'User');
-  document.getElementById('saveActivityBtn').onclick = () => {
-    const act = document.getElementById('setCustomActivity').value.trim();
-    updateSetting('customActivity', act);
-    Object.values(liveConns).forEach(conn => {
-      if (conn.open) conn.send({ type: 'ACTIVITY_UPDATE', activity: act });
-    });
-  };
-  document.getElementById('applyRecoverCodeBtn').onclick = () => {
-    const code = document.getElementById('recoverCodeInput').value.trim().toUpperCase();
-    if (code.length !== 4) return alert('Enter a 4-character code.');
-    setState({ pulse_my_code: code }, () => {
-      alert(`Peer Code restored to ${code}!`);
-      initPeerNetwork();
-    });
-  };
-  document.getElementById('setOnlineStatus').onchange = (e) => updateSetting('status', e.target.value);
-  document.getElementById('setDmFilter').onchange = (e) => updateSetting('dmFilter', e.target.value);
-  document.getElementById('setReceipts').onchange = (e) => updateSetting('receipts', e.target.checked);
-  document.getElementById('setAutoPrune').onchange = (e) => updateSetting('autoPrune', e.target.checked);
-  document.getElementById('setNotif').onchange = (e) => updateSetting('notifications', e.target.checked);
-  document.getElementById('setSound').onchange = (e) => updateSetting('sound', e.target.checked);
-  document.getElementById('setVolume').oninput = (e) => updateSetting('volume', e.target.value);
-  document.getElementById('themeSelect').onchange = (e) => updateSetting('theme', e.target.value);
-  document.getElementById('saveCustomThemeBtn').onclick = () => {
-    setState({
-      pulse_custom_theme: {
-        bg: document.getElementById('custBg').value,
-        accent: document.getElementById('custAccent').value,
-        text: document.getElementById('custText').value
-      }
-    }, () => updateSetting('theme', 'custom'));
-  };
-  document.getElementById('setFontSize').onchange = (e) => updateSetting('fontSize', e.target.value);
-  document.getElementById('setHighContrast').onchange = (e) => updateSetting('highContrast', e.target.checked);
-  document.getElementById('setCompact').onchange = (e) => updateSetting('compact', e.target.checked);
-  document.getElementById('setReducedMotion').onchange = (e) => updateSetting('reducedMotion', e.target.checked);
-  document.getElementById('setEnterSend').onchange = (e) => updateSetting('enterSend', e.target.checked);
-  document.getElementById('setTimeFormat').onchange = (e) => updateSetting('timeFormat', e.target.value);
-
-  document.getElementById('clearHistoryBtn').onclick = () => {
-    if (confirm('Delete all saved message history?')) setState({ pulse_history: {} });
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); }
   };
 }
 
@@ -1165,14 +934,9 @@ function setActiveRail(btn, title, actionText, actionFn) {
   btn.classList.add('active');
   document.getElementById('sidebarTitle').textContent = title;
   const actBtn = document.getElementById('sidebarActionBtn');
-  if (actionText) {
-    actBtn.style.display = 'inline-block';
-    actBtn.textContent = actionText;
-    actBtn.onclick = actionFn;
-  } else {
-    actBtn.style.display = 'none';
-  }
-  refreshAllViews();
+  if (actionText) { actBtn.style.display = 'inline-block'; actBtn.textContent = actionText; actBtn.onclick = actionFn; }
+  else actBtn.style.display = 'none';
+  scheduleRefresh();
 }
 
 function addFriendByCode(code, name) {
@@ -1180,11 +944,7 @@ function addFriendByCode(code, name) {
     const friends = res.pulse_friends || [];
     if (!friends.some(f => f.code === code)) {
       friends.push({ code, name });
-      setState({ pulse_friends: friends }, () => {
-        connectToCode(code);
-        sendPayloadToCode(code, { type: 'FRIEND_REQUEST', name: myCode });
-        refreshAllViews();
-      });
+      setState({ pulse_friends: friends }, () => { connectToCode(code); scheduleRefresh(); });
     }
   });
 }
@@ -1203,13 +963,12 @@ function promptCreateGroup() {
     if (friends.length === 0) return alert('Add at least one friend first!');
     const groupName = prompt('Group Name:');
     if (!groupName) return;
-    const listStr = friends.map(f => `${f.name} (${f.code})`).join(', ');
-    const codesInput = prompt(`Enter friend codes (comma separated):\n${listStr}`);
+    const codesInput = prompt(`Enter friend codes (comma separated):`);
     if (!codesInput) return;
     const members = codesInput.split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
     if (!members.includes(myCode)) members.push(myCode);
     const groups = res.pulse_groups || [];
     groups.push({ id: 'grp-' + Date.now(), name: groupName.trim(), members });
-    setState({ pulse_groups: groups }, refreshAllViews);
+    setState({ pulse_groups: groups }, scheduleRefresh);
   });
 }

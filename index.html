@@ -12,15 +12,16 @@
     :root[data-theme="purple"] { --bg-dark: #2e1065; --bg-panel: #1e1b4b; --bg-card: #3b0764; --border: #7c3aed; --accent: #a855f7; --text: #faf5ff; --muted: #c084fc; --sent: #7c3aed; --rec: #1e1b4b; }
     :root[data-theme="crimson"] { --bg-dark: #1f090d; --bg-panel: #2d0d13; --bg-card: #45121b; --border: #be123c; --accent: #f43f5e; --text: #fff1f2; --muted: #fda4af; --sent: #e11d48; --rec: #2d0d13; }
     :root[data-theme="sunset"] { --bg-dark: #271300; --bg-panel: #3b1d00; --bg-card: #522900; --border: #d97706; --accent: #f59e0b; --text: #fffbeb; --muted: #fcd34d; --sent: #d97706; --rec: #3b1d00; }
+    :root[data-theme="pro-obsidian"] { --bg-dark: #09090b; --bg-panel: #121216; --bg-card: #18181f; --border: #eab308; --accent: #eab308; --text: #fafafa; --muted: #a1a1aa; --sent: #ca8a04; --rec: #18181f; }
 
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
     body { height: 100vh; background: var(--bg-dark); color: var(--text); display: flex; overflow: hidden; font-size: var(--font-size, 15px); }
     body.high-contrast { --border: #ffffff; filter: contrast(1.15); }
     body.compact .message { padding: 6px 10px; margin-bottom: 2px; }
-    body.reduced-motion * { transition: none !important; }
+    body.no-animations * { transition: none !important; animation: none !important; }
 
     .server-rail { width: 68px; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 12px; }
-    .rail-btn { width: 46px; height: 46px; border-radius: 50%; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border); font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: 0.2s; position: relative; }
+    .rail-btn { width: 46px; height: 46px; border-radius: 50%; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border); font-size: 1.2rem; cursor: pointer; display: flex; align-items: center; justify-content: center; position: relative; }
     .rail-btn:hover, .rail-btn.active { border-radius: 14px; background: var(--accent); color: #fff; }
     .rail-badge { position: absolute; top: -2px; right: -2px; background: #ef4444; color: #fff; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; font-weight: 800; }
 
@@ -31,11 +32,7 @@
     .list-card:hover, .list-card.active { background: rgba(255,255,255,0.08); }
 
     .user-footer { padding: 10px 14px; background: var(--bg-card); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-    .status-pill { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-    .status-online { background: #10b981; }
-    .status-idle { background: #f59e0b; }
-    .status-dnd { background: #ef4444; }
-    .status-invisible { background: #64748b; }
+    .pro-badge { background: linear-gradient(90deg, #f59e0b, #ec4899); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 6px; font-weight: 800; margin-left: 4px; }
 
     .main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
     .chat-header { padding: 12px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; gap: 10px; }
@@ -62,20 +59,40 @@
     .poll-card { background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
     .poll-opt { background: var(--bg-card); border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; font-size: 0.85rem; }
 
+    /* Call & Custom Soundboard */
     .media-area { display: none; padding: 12px; background: #000; flex-direction: column; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
-    .soundboard { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+    .soundboard { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; align-items: center; }
 
+    /* Settings Overlay & Pro Paywall Blockers */
     .settings-overlay { position: fixed; inset: 0; background: var(--bg-dark); display: none; z-index: 200; }
     .settings-nav { width: 250px; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 20px 12px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
     .settings-cat { font-size: 0.7rem; font-weight: 800; color: var(--muted); text-transform: uppercase; padding: 10px 10px 4px; }
     .settings-tab { text-align: left; background: transparent; color: var(--muted); padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; cursor: pointer; }
     .settings-tab.active { background: rgba(255,255,255,0.08); color: var(--text); }
-    .settings-content { flex: 1; padding: 32px 44px; overflow-y: auto; max-width: 780px; }
+    .settings-content { flex: 1; padding: 32px 44px; overflow-y: auto; max-width: 820px; }
     .settings-section { display: none; flex-direction: column; gap: 16px; }
     .settings-section.active { display: flex; }
-    .setting-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .setting-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; position: relative; overflow: hidden; }
     .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
     .setting-row:last-child { border-bottom: none; }
+
+    /* Pro Paywall Overlay Screen */
+    .pro-lock-screen {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 20px;
+      z-index: 10;
+      gap: 8px;
+    }
+    .pro-lock-screen h4 { color: #fbbf24; font-size: 1.05rem; }
+    .pro-lock-screen p { color: #cbd5e1; font-size: 0.82rem; max-width: 380px; }
 
     .modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 100; }
     .modal-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 420px; text-align: center; display: flex; flex-direction: column; gap: 14px; }
@@ -83,7 +100,6 @@
 </head>
 <body>
 
-  <!-- Left Server Rail -->
   <div class="server-rail">
     <button class="rail-btn active" id="railFriends" title="Direct Messages">💬</button>
     <button class="rail-btn" id="railGroups" title="Group Channels">👥</button>
@@ -92,7 +108,6 @@
     <button class="rail-btn" id="railSettings" title="User Settings">⚙️</button>
   </div>
 
-  <!-- Sidebar -->
   <div class="sidebar">
     <div class="sidebar-header">
       <span id="sidebarTitle">DIRECT MESSAGES</span>
@@ -104,10 +119,10 @@
     <div class="list-container" id="sidebarList"></div>
     <div class="user-footer">
       <div style="overflow:hidden;">
-        <div style="font-weight: 700; font-size: 0.88rem; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">
-          <span class="status-pill status-online" id="footerStatusDot"></span><span id="footerDisplayName">User</span>
+        <div style="font-weight: 700; font-size: 0.88rem;">
+          <span id="footerDisplayName">User</span><span class="pro-badge" id="wsProBadge" style="display:none;">PRO</span>
         </div>
-        <div style="font-size: 0.72rem; color: var(--muted); white-space:nowrap; text-overflow:ellipsis; overflow:hidden;" id="footerCustomActivity">Ready to chat</div>
+        <div style="font-size: 0.72rem; color: var(--muted);" id="footerCustomActivity">Ready to chat</div>
         <div style="font-size: 0.72rem; color: var(--accent); font-family: monospace;">CODE: <span id="myCodeDisplay">----</span></div>
       </div>
       <div style="display:flex; flex-direction:column; gap:4px;">
@@ -117,7 +132,6 @@
     </div>
   </div>
 
-  <!-- Main Chat Area -->
   <div class="main-area">
     <div class="chat-header">
       <div style="display:flex; align-items:center; gap:8px;">
@@ -130,7 +144,7 @@
       </div>
     </div>
 
-    <!-- Active Call & Screen Share Area -->
+    <!-- Active Call & Custom Soundboard Area -->
     <div id="mediaArea" class="media-area">
       <div style="display:flex; gap:12px;">
         <video id="localVideo" autoplay muted playsinline style="width: 220px; border-radius: 8px; background:#111;"></video>
@@ -142,13 +156,7 @@
         <button class="btn-sec" id="shareScreenBtn">🖥️ Share Screen (<span id="screenTimeLeft">10:00</span> left)</button>
         <button class="btn-danger" id="endCallBtn">End Call</button>
       </div>
-      <div class="soundboard">
-        <span style="font-size:0.75rem; color:#94a3b8; align-self:center;">Soundboard:</span>
-        <button class="btn-sec sb-btn" data-freq="523.25" style="padding:4px 8px; font-size:0.75rem;">🎺 Horn</button>
-        <button class="btn-sec sb-btn" data-freq="659.25" style="padding:4px 8px; font-size:0.75rem;">🔔 Ding</button>
-        <button class="btn-sec sb-btn" data-freq="392.00" style="padding:4px 8px; font-size:0.75rem;">🥁 Rimshot</button>
-        <button class="btn-sec sb-btn" data-freq="880.00" style="padding:4px 8px; font-size:0.75rem;">✨ Chime</button>
-      </div>
+      <div class="soundboard" id="customSoundboardBar"></div>
     </div>
 
     <div class="messages-box" id="messagesBox"></div>
@@ -162,7 +170,7 @@
     <div class="input-bar">
       <button class="btn-sec" id="createPollBtn" title="Create Poll">📊</button>
       <button class="btn-sec" id="voiceNoteBtn" title="Hold to Record Voice Note">🎤</button>
-      <textarea id="msgInput" placeholder="Message (supports URLs, YouTube links, and /poll)..." style="flex: 1; height: 42px; resize: none;"></textarea>
+      <textarea id="msgInput" placeholder="Message..." style="flex: 1; height: 42px; resize: none;"></textarea>
       <button id="sendBtn" style="padding: 10px 20px;">Send</button>
     </div>
   </div>
@@ -179,109 +187,127 @@
     </div>
   </div>
 
-  <!-- Full Settings Overlay -->
+  <!-- Full Settings Overlay (40+ Granular Settings + Pulse Pro Paywalls) -->
   <div class="settings-overlay" id="settingsOverlay">
     <div class="settings-nav">
-      <input type="text" id="settingsSearchInput" placeholder="🔍 Search settings..." style="margin-bottom: 8px; width: 100%;" />
-      <div class="settings-cat">User Settings</div>
-      <button class="settings-tab active" data-sec="account">👤 Account & Recovery</button>
-      <button class="settings-tab" data-sec="privacy">🛡️ Data & Auto-Prune</button>
-      <button class="settings-tab" data-sec="permissions">💬 Permissions & Receipts</button>
-      <button class="settings-tab" data-sec="notifications">🔔 Notifications</button>
-      <div class="settings-cat">Experience</div>
-      <button class="settings-tab" data-sec="voice">🎙️ Voice, Screen & PTT</button>
-      <button class="settings-tab" data-sec="appearance">🎨 Appearance</button>
-      <button class="settings-tab" data-sec="accessibility">♿ Accessibility</button>
-      <button class="settings-tab" data-sec="system">⌨️ System & Time</button>
+      <input type="text" id="settingsSearchInput" placeholder="🔍 Search 40+ settings..." style="margin-bottom: 8px; width: 100%;" />
+      <div class="settings-cat">Membership</div>
+      <button class="settings-tab active" data-sec="pro" style="color:#fbbf24;">⭐ Pulse Pro & Gift Codes</button>
+      <div class="settings-cat">User & Performance</div>
+      <button class="settings-tab" data-sec="account">👤 Account & Recovery</button>
+      <button class="settings-tab" data-sec="performance">⚡ Turbo Performance Engine</button>
+      <button class="settings-tab" data-sec="soundboard">🔊 Custom Soundboard Slots</button>
+      <button class="settings-tab" data-sec="voice">🎙️ Audio & Mic Hardware</button>
+      <button class="settings-tab" data-sec="video">📹 Video & Screen Quality</button>
+      <div class="settings-cat">Customisation & Safety</div>
+      <button class="settings-tab" data-sec="appearance">🎨 Peak Customisation</button>
+      <button class="settings-tab" data-sec="privacy">🛡️ Privacy & Storage</button>
+      <button class="settings-tab" data-sec="accessibility">♿ Accessibility & Keybinds</button>
       <div style="flex:1;"></div>
       <button class="btn-danger" id="closeSettingsBtn">Close Settings</button>
     </div>
 
     <div class="settings-content">
-      <!-- ACCOUNT & RECOVERY -->
-      <div class="settings-section active" id="sec-account">
+      <!-- 1. PULSE PRO & GIFT CODES -->
+      <div class="settings-section active" id="sec-pro">
+        <h2 style="color:#fbbf24;">⭐ Pulse Pro Membership & Gift Card Activation</h2>
+        <div class="setting-card" style="border-color:#eab308;">
+          <div class="setting-row">
+            <div><strong>Membership Status</strong><div style="font-size:0.82rem; color:var(--muted);" id="proStatusDesc">Checking trial status...</div></div>
+            <span class="pro-badge" id="proStatusPill" style="font-size:0.85rem; padding:4px 10px;">CHECKING</span>
+          </div>
+          <div class="setting-row">
+            <div><strong>Redeem Gift Card Code</strong><div style="font-size:0.8rem; color:var(--muted);">Enter a 16-character Pulse Pro code to unlock permanent access</div></div>
+            <div style="display:flex; gap:6px;"><input type="text" id="giftCodeInput" placeholder="PULSE-PRO-XXXX-XXXX" style="width:190px; text-transform:uppercase;" /><button id="redeemCodeBtn" style="background:#eab308; color:#000;">Redeem</button></div>
+          </div>
+          <div style="font-size:0.82rem; color:var(--muted); line-height:1.6;">
+            <strong>Pulse Pro Perks:</strong><br>
+            • 5 Custom Soundboard Upload Slots (vs 3 Standard)<br>
+            • 60 FPS HD Screen Sharing & 30-Minute Weekly Screen Quota (vs 10-Min)<br>
+            • Zero-Latency Turbo Packet Engine & Unlimited Storage Retention<br>
+            • Exclusive Gold Obsidian Theme, Custom CSS/Gradient Accents & PRO Profile Badge
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. ACCOUNT & RECOVERY -->
+      <div class="settings-section" id="sec-account">
         <h2>Account, Activity & Peer Code Recovery</h2>
         <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Display Name</strong></div>
-            <div style="display:flex; gap:6px;"><input type="text" id="setDisplayName" /><button id="saveDisplayNameBtn">Save</button></div>
-          </div>
-          <div class="setting-row">
-            <div><strong>Custom Activity Status</strong><div style="font-size:0.8rem; color:var(--muted);">Shown below your name (e.g. "Playing Minecraft")</div></div>
-            <div style="display:flex; gap:6px;"><input type="text" id="setCustomActivity" placeholder="What are you doing?" /><button id="saveActivityBtn">Set</button></div>
-          </div>
-          <div class="setting-row">
-            <div><strong>Presence Status</strong></div>
-            <select id="setOnlineStatus">
-              <option value="online">🟢 Online</option>
-              <option value="idle">🟡 Idle</option>
-              <option value="dnd">🔴 Do Not Disturb</option>
-              <option value="invisible">⚫ Invisible</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <div><strong>Recover / Set Custom 4-Digit Code</strong><div style="font-size:0.8rem; color:var(--muted);">Reclaim your old code so you never have to re-add friends</div></div>
-            <div style="display:flex; gap:6px;"><input type="text" id="recoverCodeInput" maxlength="4" placeholder="e.g. 4A9F" style="width:90px; text-transform:uppercase;" /><button id="applyRecoverCodeBtn">Restore Code</button></div>
-          </div>
+          <div class="setting-row"><div><strong>Display Name</strong></div><div style="display:flex; gap:6px;"><input type="text" id="setDisplayName" /><button id="saveDisplayNameBtn">Save</button></div></div>
+          <div class="setting-row"><div><strong>Custom Activity Status</strong></div><div style="display:flex; gap:6px;"><input type="text" id="setCustomActivity" placeholder="Playing Minecraft..." /><button id="saveActivityBtn">Set</button></div></div>
+          <div class="setting-row"><div><strong>Presence Status</strong></div><select id="setOnlineStatus"><option value="online">🟢 Online</option><option value="idle">🟡 Idle</option><option value="dnd">🔴 Do Not Disturb</option><option value="invisible">⚫ Invisible</option></select></div>
+          <div class="setting-row"><div><strong>Recover Old 4-Digit Peer Code</strong></div><div style="display:flex; gap:6px;"><input type="text" id="recoverCodeInput" maxlength="4" style="width:85px; text-transform:uppercase;" /><button id="applyRecoverCodeBtn">Restore</button></div></div>
         </div>
       </div>
 
-      <!-- DATA & AUTO-PRUNE -->
-      <div class="settings-section" id="sec-privacy">
-        <h2>Data & Storage Management</h2>
+      <!-- 3. TURBO PERFORMANCE ENGINE -->
+      <div class="settings-section" id="sec-performance">
+        <h2>Turbo Performance & Latency Engine</h2>
         <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Auto-Prune Old Messages at 80% Storage</strong><div style="font-size:0.8rem; color:var(--muted);">Automatically trims messages older than 30 days only when storage exceeds 80%</div></div>
-            <input type="checkbox" id="setAutoPrune" checked />
+          <div class="setting-row"><div><strong>Hardware GPU Acceleration</strong></div><input type="checkbox" id="setGpuAccel" checked /></div>
+          <div class="setting-row"><div><strong>Disable UI Animations (Zero-Lag Mode)</strong></div><input type="checkbox" id="setNoAnimations" /></div>
+          <div class="setting-row"><div><strong>Message Render Window Limit</strong></div><select id="setRenderLimit"><option value="50">Last 50 Messages (Fastest)</option><option value="150" selected>Last 150 Messages</option><option value="500">Last 500 Messages</option></select></div>
+          <div class="setting-row"><div><strong>Background Heartbeat Interval</strong></div><select id="setPingInterval"><option value="15000">15 Seconds (Ultra Responsive)</option><option value="30000" selected>30 Seconds (Balanced)</option><option value="60000">60 Seconds (Battery Saver)</option></select></div>
+        </div>
+        <!-- Pro Locked Performance Card -->
+        <div class="setting-card">
+          <div class="pro-lock-screen pro-gate">
+            <h4>🔒 Requires Pulse Pro</h4>
+            <p>Turbo WebRTC Packet Prioritization, 256kbps Opus Audio Bitrate, and Unlimited Storage Retention require Pulse Pro.</p>
+            <button onclick="document.querySelector('[data-sec=pro]').click()" style="background:#eab308; color:#000;">Unlock with Gift Code</button>
           </div>
-          <div class="setting-row">
-            <div><strong>Local Storage Usage</strong><div style="font-size:0.8rem; color:var(--muted);" id="storageStats">Calculating...</div></div>
-            <button class="btn-danger" id="clearHistoryBtn">Clear All History</button>
-          </div>
+          <div class="setting-row"><div><strong>Turbo WebRTC Packet Prioritization</strong></div><input type="checkbox" id="setTurboPackets" checked /></div>
+          <div class="setting-row"><div><strong>Unlimited Chat Storage (Disable Auto-Prune)</strong></div><input type="checkbox" id="setUnlimitedStorage" checked /></div>
         </div>
       </div>
 
-      <!-- PERMISSIONS -->
-      <div class="settings-section" id="sec-permissions">
-        <h2>Messaging Permissions</h2>
-        <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Direct Message Filtering</strong></div>
-            <select id="setDmFilter">
-              <option value="requests">Filter Strangers to Requests</option>
-              <option value="friends_only">Friends Only</option>
-            </select>
-          </div>
-          <div class="setting-row"><div><strong>Send Read Receipts</strong></div><input type="checkbox" id="setReceipts" checked /></div>
-        </div>
+      <!-- 4. CUSTOM SOUNDBOARD SLOTS (3 Free / 5 Paid) -->
+      <div class="settings-section" id="sec-soundboard">
+        <h2>Custom Soundboard Uploader (3 Standard / 5 Pulse Pro)</h2>
+        <div class="setting-card" id="soundboardSlotsContainer"></div>
       </div>
 
-      <!-- NOTIFICATIONS -->
-      <div class="settings-section" id="sec-notifications">
-        <h2>Notifications</h2>
+      <!-- 5. AUDIO & MIC HARDWARE -->
+      <div class="settings-section" id="sec-voice">
+        <h2>Audio & Microphone Hardware</h2>
         <div class="setting-card">
+          <div class="setting-row"><div><strong>Microphone Input Device</strong></div><select id="micDeviceSelect"><option value="">Default Microphone</option></select></div>
+          <div class="setting-row"><div><strong>Test Microphone Live</strong><div style="font-size:0.8rem; color:var(--muted);" id="micTestStatus">Click test to verify browser mic access</div></div><button id="testMicBtn">🎙️ Test Mic</button></div>
+          <div class="setting-row"><div><strong>Echo Cancellation</strong></div><input type="checkbox" id="setEcho" checked /></div>
+          <div class="setting-row"><div><strong>Noise Suppression</strong></div><input type="checkbox" id="setNoise" checked /></div>
+          <div class="setting-row"><div><strong>Auto Gain Control</strong></div><input type="checkbox" id="setAgc" checked /></div>
           <div class="setting-row"><div><strong>Desktop Notifications</strong></div><input type="checkbox" id="setNotif" checked /></div>
           <div class="setting-row"><div><strong>Sound Effects & Ringtones</strong></div><input type="checkbox" id="setSound" checked /></div>
-          <div class="setting-row"><div><strong>Alert Volume</strong></div><input type="range" id="setVolume" min="0" max="1" step="0.1" value="1" /></div>
+          <div class="setting-row"><div><strong>Master Alert Volume</strong></div><input type="range" id="setVolume" min="0" max="1" step="0.1" value="1" /></div>
         </div>
       </div>
 
-      <!-- VOICE & SCREEN -->
-      <div class="settings-section" id="sec-voice">
-        <h2>Voice, Video & Screen Sharing</h2>
+      <!-- 6. VIDEO & SCREEN QUALITY -->
+      <div class="settings-section" id="sec-video">
+        <h2>Video & Screen Share Quality</h2>
         <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Weekly Screen Share Quota</strong><div style="font-size:0.8rem; color:var(--muted);" id="settingsScreenQuota">10m 00s remaining this week</div></div>
+          <div class="setting-row"><div><strong>Weekly Screen Share Quota</strong><div style="font-size:0.8rem; color:var(--muted);" id="settingsScreenQuota">10m 00s remaining</div></div></div>
+          <div class="setting-row"><div><strong>Camera Resolution</strong></div><select id="setCamRes"><option value="480">480p (Low Bandwidth)</option><option value="720" selected>720p HD</option></select></div>
+          <div class="setting-row"><div><strong>Mirror Local Camera Preview</strong></div><input type="checkbox" id="setMirrorCam" checked /></div>
+        </div>
+        <div class="setting-card">
+          <div class="pro-lock-screen pro-gate">
+            <h4>🔒 Requires Pulse Pro</h4>
+            <p>1080p 60FPS Screen Sharing & 30-Minute Weekly Screen Quota require Pulse Pro.</p>
+            <button onclick="document.querySelector('[data-sec=pro]').click()" style="background:#eab308; color:#000;">Unlock with Gift Code</button>
           </div>
+          <div class="setting-row"><div><strong>60 FPS Smooth Screen Share</strong></div><input type="checkbox" id="set60Fps" checked /></div>
+          <div class="setting-row"><div><strong>Extended 30-Min Weekly Screen Quota</strong></div><input type="checkbox" checked disabled /></div>
         </div>
       </div>
 
-      <!-- APPEARANCE -->
+      <!-- 7. PEAK CUSTOMISATION -->
       <div class="settings-section" id="sec-appearance">
-        <h2>Appearance</h2>
+        <h2>Peak Visual Customisation</h2>
         <div class="setting-card">
           <div class="setting-row">
-            <div><strong>Color Theme</strong></div>
+            <div><strong>Base Theme</strong></div>
             <select id="themeSelect">
               <option value="discord-dark">Discord Dark</option>
               <option value="cyber-dark">Cyber Neon</option>
@@ -290,7 +316,7 @@
               <option value="purple">Obsidian Purple</option>
               <option value="crimson">Crimson Red</option>
               <option value="sunset">Amber Sunset</option>
-              <option value="custom">Custom Theme</option>
+              <option value="custom">Custom Color Picker</option>
             </select>
           </div>
           <div id="customThemeBox" style="display:none; flex-direction:column; gap:10px;">
@@ -299,37 +325,40 @@
             <div class="setting-row"><span>Text</span><input type="color" id="custText" value="#ffffff" /></div>
             <button id="saveCustomThemeBtn">Apply Custom Theme</button>
           </div>
+          <div class="setting-row"><div><strong>Chat Bubble Corner Radius</strong></div><select id="setBubbleRadius"><option value="4px">Sharp (4px)</option><option value="14px" selected>Rounded (14px)</option><option value="24px">Pill (24px)</option></select></div>
+          <div class="setting-row"><div><strong>Font Family</strong></div><select id="setFontFamily"><option value="system-ui">System Sans</option><option value="monospace">Developer Monospace</option><option value="Georgia, serif">Classic Serif</option></select></div>
+        </div>
+        <div class="setting-card">
+          <div class="pro-lock-screen pro-gate">
+            <h4>🔒 Requires Pulse Pro</h4>
+            <p>Exclusive Gold Obsidian Theme & Custom Wallpaper Backgrounds require Pulse Pro.</p>
+            <button onclick="document.querySelector('[data-sec=pro]').click()" style="background:#eab308; color:#000;">Unlock with Gift Code</button>
+          </div>
+          <div class="setting-row"><div><strong>Apply Gold Obsidian Pro Theme</strong></div><button id="applyProThemeBtn" style="background:#eab308; color:#000;">Activate Gold Theme</button></div>
+          <div class="setting-row"><div><strong>Custom Chat Background Image URL</strong></div><input type="text" id="setBgImageUrl" placeholder="https://..." style="width:220px;" /></div>
         </div>
       </div>
 
-      <!-- ACCESSIBILITY -->
-      <div class="settings-section" id="sec-accessibility">
-        <h2>Accessibility</h2>
+      <!-- 8. PRIVACY & STORAGE -->
+      <div class="settings-section" id="sec-privacy">
+        <h2>Privacy, Safety & Storage</h2>
         <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Font Scaling</strong></div>
-            <select id="setFontSize">
-              <option value="13px">Small</option>
-              <option value="15px" selected>Normal</option>
-              <option value="17px">Large</option>
-              <option value="20px">Extra Large</option>
-            </select>
-          </div>
+          <div class="setting-row"><div><strong>DM Filtering</strong></div><select id="setDmFilter"><option value="requests">Filter Strangers to Requests</option><option value="friends_only">Friends Only</option></select></div>
+          <div class="setting-row"><div><strong>Send Read Receipts</strong></div><input type="checkbox" id="setReceipts" checked /></div>
+          <div class="setting-row"><div><strong>Auto-Prune Old Messages at 80%</strong></div><input type="checkbox" id="setAutoPrune" checked /></div>
+          <div class="setting-row"><div><strong>Local Storage Usage</strong><div style="font-size:0.8rem; color:var(--muted);" id="storageStats">Calculating...</div></div><button class="btn-danger" id="clearHistoryBtn">Clear All History</button></div>
+        </div>
+      </div>
+
+      <!-- 9. ACCESSIBILITY & KEYBINDS -->
+      <div class="settings-section" id="sec-accessibility">
+        <h2>Accessibility & Keybinds</h2>
+        <div class="setting-card">
+          <div class="setting-row"><div><strong>Font Scaling</strong></div><select id="setFontSize"><option value="13px">Small</option><option value="15px" selected>Normal</option><option value="17px">Large</option><option value="20px">Extra Large</option></select></div>
           <div class="setting-row"><div><strong>High Contrast Mode</strong></div><input type="checkbox" id="setHighContrast" /></div>
           <div class="setting-row"><div><strong>Compact Density</strong></div><input type="checkbox" id="setCompact" /></div>
-          <div class="setting-row"><div><strong>Reduced Motion</strong></div><input type="checkbox" id="setReducedMotion" /></div>
-        </div>
-      </div>
-
-      <!-- SYSTEM -->
-      <div class="settings-section" id="sec-system">
-        <h2>System & Time</h2>
-        <div class="setting-card">
           <div class="setting-row"><div><strong>Press Enter to Send</strong></div><input type="checkbox" id="setEnterSend" checked /></div>
-          <div class="setting-row">
-            <div><strong>Time Format</strong></div>
-            <select id="setTimeFormat"><option value="12h">12-Hour</option><option value="24h">24-Hour</option></select>
-          </div>
+          <div class="setting-row"><div><strong>Time Format</strong></div><select id="setTimeFormat"><option value="12h">12-Hour</option><option value="24h">24-Hour</option></select></div>
         </div>
       </div>
     </div>
