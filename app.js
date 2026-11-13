@@ -1,13 +1,17 @@
+const LIVE_WORKSPACE_URL = 'https://iliketrains1382.github.io/pulse-chat/index.html';
 const IS_POPUP = !!document.getElementById('view-chats');
+const IS_WEB_HOSTED = window.location.protocol.startsWith('http');
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const EXT_ID = URL_PARAMS.get('extId') || localStorage.getItem('pulse_ext_id') || '';
+if (URL_PARAMS.get('extId')) localStorage.setItem('pulse_ext_id', URL_PARAMS.get('extId'));
+
 let peer = null;
 let myCode = '';
 let activeTarget = null;
 let liveConns = {};
 let currentCall = null;
 let localStream = null;
-let replyContext = null;
 let typingTimeout = null;
-let pttEnabled = false;
 let isMuted = false;
 let renderTimer = null;
 
@@ -26,17 +30,39 @@ const BANNED_PHRASES = ['67', '6-7', '6 7'];
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 let screenShareTimer = null;
 let screenStream = null;
-let mediaRecorder = null;
-let audioChunks = [];
 
-const chimeAudio = new Audio(chrome.runtime.getURL('chime.mp3'));
-const ringtoneAudio = new Audio(chrome.runtime.getURL('ringtone.mp3'));
-const callingAudio = new Audio(chrome.runtime.getURL('calling.mp3'));
+const getAssetUrl = (file) => (!IS_WEB_HOSTED && chrome?.runtime?.getURL) ? chrome.runtime.getURL(file) : file;
+const chimeAudio = new Audio(getAssetUrl('chime.mp3'));
+const ringtoneAudio = new Audio(getAssetUrl('ringtone.mp3'));
+const callingAudio = new Audio(getAssetUrl('calling.mp3'));
 ringtoneAudio.loop = true;
 callingAudio.loop = true;
 
-function getState(keys, cb) { chrome.storage.local.get(keys, cb); }
-function setState(obj, cb) { chrome.storage.local.set(obj, cb); }
+// Unified Storage Bridge (Works both inside Extension & on GitHub Pages)
+function getState(keys, cb) {
+  if (!IS_WEB_HOSTED && chrome?.storage?.local) {
+    chrome.storage.local.get(keys, cb);
+  } else if (IS_WEB_HOSTED && EXT_ID && chrome?.runtime?.sendMessage) {
+    chrome.runtime.sendMessage(EXT_ID, { type: 'STORAGE_GET', keys }, (res) => cb(res || {}));
+  } else {
+    const out = {};
+    (Array.isArray(keys) ? keys : [keys]).forEach(k => {
+      try { out[k] = JSON.parse(localStorage.getItem(k)); } catch (e) {}
+    });
+    cb(out);
+  }
+}
+
+function setState(obj, cb) {
+  if (!IS_WEB_HOSTED && chrome?.storage?.local) {
+    chrome.storage.local.set(obj, cb);
+  } else if (IS_WEB_HOSTED && EXT_ID && chrome?.runtime?.sendMessage) {
+    chrome.runtime.sendMessage(EXT_ID, { type: 'STORAGE_SET', data: obj }, () => { if (cb) cb(); });
+  } else {
+    Object.keys(obj).forEach(k => localStorage.setItem(k, JSON.stringify(obj[k])));
+    if (cb) cb();
+  }
+}
 
 // --- Pro & 3-Day Trial Checker ---
 function checkProAccess(cb) {
@@ -199,7 +225,7 @@ function renderCallSoundboard(hasPro) {
   });
 }
 
-// --- Initialization & Debounced Renders ---
+// --- Initialization & Sync Loop ---
 function scheduleRefresh() {
   if (renderTimer) cancelAnimationFrame(renderTimer);
   renderTimer = requestAnimationFrame(() => refreshAllViews());
@@ -217,15 +243,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setInterval(connectToAllFriends, 30000);
 
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.pulse_settings || changes.pulse_custom_theme) loadSettingsAndTheme();
-    if (changes.pulse_pro_permanent || changes.pulse_trial_start) updateProUI();
-    if (changes.pulse_pending_inbox) deliverPendingInbox();
-    if (changes.pulse_friends || changes.pulse_groups || changes.pulse_requests || changes.pulse_history) {
+  if (!IS_WEB_HOSTED && chrome?.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes) => {
+      if (changes.pulse_settings || changes.pulse_custom_theme) loadSettingsAndTheme();
+      if (changes.pulse_pro_permanent || changes.pulse_trial_start) updateProUI();
+      if (changes.pulse_pending_inbox) deliverPendingInbox();
+      if (changes.pulse_friends || changes.pulse_groups || changes.pulse_requests || changes.pulse_history) {
+        scheduleRefresh();
+        flushOfflineQueue();
+      }
+    });
+  } else {
+    // Sync state periodically when running on GitHub Pages
+    setInterval(() => {
+      deliverPendingInbox();
       scheduleRefresh();
-      flushOfflineQueue();
-    }
-  });
+    }, 3000);
+  }
 });
 
 function playSound(audioObj) {
@@ -344,7 +378,7 @@ function getMediaStreamWithFallback(cb) {
   });
 }
 
-// --- PeerJS Networking (Clean Logs & Safe Connection Guards) ---
+// --- PeerJS Networking ---
 function initPeerNetwork() {
   getState(['pulse_my_code'], (res) => {
     myCode = res.pulse_my_code;
@@ -374,13 +408,21 @@ function initPeerNetwork() {
       playSound(ringtoneAudio);
       const callerCode = call.peer.replace(/^pulse-(ws|pop|bg)-/, '');
       if (IS_POPUP) {
-        chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+        openWorkspaceTab();
       } else {
         document.getElementById('callerNameTitle').textContent = `Call from ${callerCode}`;
         document.getElementById('callModal').style.display = 'flex';
       }
     });
   });
+}
+
+function openWorkspaceTab() {
+  if (!IS_WEB_HOSTED && chrome?.tabs?.create) {
+    chrome.tabs.create({ url: `${LIVE_WORKSPACE_URL}?extId=${chrome.runtime.id}` });
+  } else {
+    window.open(LIVE_WORKSPACE_URL, '_blank');
+  }
 }
 
 function connectToAllFriends() {
@@ -553,7 +595,7 @@ function saveMessageToHistory(chatId, msgObj) {
     if (!history[chatId]) history[chatId] = [];
     if (!history[chatId].some(m => m.id === msgObj.id)) {
       history[chatId].push(msgObj);
-      setState({ pulse_history: history });
+      setState({ pulse_history: history }, scheduleRefresh);
     }
   });
 }
@@ -564,7 +606,7 @@ function markMessageDelivered(chatId, msgId) {
     if (history[chatId]) {
       const msg = history[chatId].find(m => m.id === msgId);
       if (msg && msg.status !== 'Read') msg.status = 'Sent';
-      setState({ pulse_history: history });
+      setState({ pulse_history: history }, scheduleRefresh);
     }
   });
 }
@@ -575,7 +617,7 @@ function markMessageRead(chatId, msgId) {
     if (history[chatId]) {
       const msg = history[chatId].find(m => m.id === msgId);
       if (msg) msg.status = 'Read';
-      setState({ pulse_history: history });
+      setState({ pulse_history: history }, scheduleRefresh);
     }
   });
 }
@@ -585,7 +627,7 @@ function addRequest(reqObj) {
     const reqs = res.pulse_requests || [];
     if (!reqs.some(r => r.code === reqObj.code && r.type === reqObj.type)) {
       reqs.push(reqObj);
-      setState({ pulse_requests: reqs });
+      setState({ pulse_requests: reqs }, scheduleRefresh);
       playSound(chimeAudio);
     }
   });
@@ -595,13 +637,18 @@ function notifyIfNotViewing(chatId, title, text, msgId) {
   const isViewing = document.hasFocus() && activeTarget && activeTarget.id === chatId;
   if (!isViewing && !IS_POPUP) {
     playSound(chimeAudio);
-    chrome.runtime.sendMessage({
+    const msgData = {
       type: 'NEW_MESSAGE_NOTIFICATION',
       senderCode: chatId,
       senderName: title,
       text: text,
       msgId
-    });
+    };
+    if (!IS_WEB_HOSTED && chrome?.runtime?.sendMessage) {
+      chrome.runtime.sendMessage(msgData);
+    } else if (IS_WEB_HOSTED && EXT_ID && chrome?.runtime?.sendMessage) {
+      chrome.runtime.sendMessage(EXT_ID, msgData);
+    }
   }
 }
 
@@ -754,9 +801,12 @@ function handleSendMessage(extraPayload = {}) {
   const matchedBan = BANNED_PHRASES.find(phrase => text.includes(phrase));
   if (matchedBan) {
     if (input) input.value = '';
-    chrome.tabs.create({
-      url: chrome.runtime.getURL(`warning.html?term=${encodeURIComponent(matchedBan)}`)
-    });
+    const warnUrl = getAssetUrl(`warning.html?term=${encodeURIComponent(matchedBan)}`);
+    if (!IS_WEB_HOSTED && chrome?.tabs?.create) {
+      chrome.tabs.create({ url: warnUrl });
+    } else {
+      window.open(warnUrl, '_blank');
+    }
     return;
   }
 
@@ -787,7 +837,7 @@ function handleSendMessage(extraPayload = {}) {
 }
 
 function loadSettingsAndTheme() {
-  getState(['pulse_settings', 'pulse_custom_theme'], (res) => {
+  getState(['pulse_settings'], (res) => {
     const s = res.pulse_settings || {};
     const theme = s.theme || 'discord-dark';
     document.documentElement.setAttribute('data-theme', theme);
@@ -803,7 +853,7 @@ function updateSetting(key, val) {
   getState(['pulse_settings'], (res) => {
     const s = res.pulse_settings || {};
     s[key] = val;
-    setState({ pulse_settings: s });
+    setState({ pulse_settings: s }, loadSettingsAndTheme);
   });
 }
 
@@ -815,10 +865,10 @@ function switchPopupTab(tabName) {
 function bindUIEvents() {
   if (IS_POPUP) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.onclick = () => switchPopupTab(btn.dataset.tab));
-    document.getElementById('openWorkspaceBtn').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+    document.getElementById('openWorkspaceBtn').onclick = openWorkspaceTab;
     document.getElementById('addFriendBtn').onclick = promptAddFriend;
     document.getElementById('createGroupBtn').onclick = promptCreateGroup;
-    document.getElementById('popupCallBtn').onclick = () => chrome.tabs.create({ url: chrome.runtime.getURL('index.html') });
+    document.getElementById('popupCallBtn').onclick = openWorkspaceTab;
   } else {
     document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
     document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP CHANNELS', '+ Group', promptCreateGroup);
@@ -913,7 +963,7 @@ function bindUIEvents() {
     document.getElementById('setAgc').onchange = (e) => updateSetting('agc', e.target.checked);
     document.getElementById('setFontFamily').onchange = (e) => updateSetting('fontFamily', e.target.value);
     document.getElementById('setFontSize').onchange = (e) => updateSetting('fontSize', e.target.value);
-    document.getElementById('clearHistoryBtn').onclick = () => { if (confirm('Clear all history?')) setState({ pulse_history: {} }); };
+    document.getElementById('clearHistoryBtn').onclick = () => { if (confirm('Clear all history?')) setState({ pulse_history: {} }, scheduleRefresh); };
   }
 
   document.getElementById('copyCodeBtn').onclick = () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); };
