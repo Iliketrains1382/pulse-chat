@@ -11,7 +11,7 @@ let pttEnabled = false;
 let isMuted = false;
 let renderTimer = null;
 
-// Valid Gift Card Codes
+// Valid Gift Card Codes for Pulse Pro
 const VALID_GIFT_CODES = [
   'PULSE-PRO-9X4K-2026',
   'PULSE-VIP-7M2P-8841',
@@ -78,12 +78,10 @@ function updateProUI() {
     if (descEl) descEl.textContent = statusText;
     if (pillEl) pillEl.textContent = hasPro ? (isTrial ? '3-DAY TRIAL' : 'PULSE PRO') : 'STANDARD TIER';
 
-    // Show or hide paywall screens on Pro setting cards
     document.querySelectorAll('.pro-gate').forEach(gate => {
       gate.style.display = hasPro ? 'none' : 'flex';
     });
 
-    // Revert Pro theme automatically if trial expired
     if (!hasPro) {
       getState(['pulse_settings'], (res) => {
         const s = res.pulse_settings || {};
@@ -181,7 +179,6 @@ function renderCallSoundboard(hasPro) {
     const sounds = res.pulse_custom_sounds || [];
     bar.innerHTML = `<span style="font-size:0.75rem; color:#94a3b8;">Soundboard:</span>`;
 
-    // Built-in Horn + Custom Uploaded Slots
     const defaultBtn = document.createElement('button');
     defaultBtn.className = 'btn-sec';
     defaultBtn.style.cssText = 'padding:4px 8px; font-size:0.75rem;';
@@ -202,7 +199,7 @@ function renderCallSoundboard(hasPro) {
   });
 }
 
-// --- Initialization & Debounced Renders (Zero Lag) ---
+// --- Initialization & Debounced Renders ---
 function scheduleRefresh() {
   if (renderTimer) cancelAnimationFrame(renderTimer);
   renderTimer = requestAnimationFrame(() => refreshAllViews());
@@ -340,15 +337,14 @@ function getMediaStreamWithFallback(cb) {
     navigator.mediaDevices.getUserMedia({ video: true, audio: audioConstraints })
       .then(stream => cb(stream))
       .catch(() => {
-        // Fallback to audio-only if camera is missing or busy
         navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraints })
           .then(audioOnlyStream => cb(audioOnlyStream))
-          .catch(err => alert('Microphone blocked! Click the lock/camera icon in your Chrome address bar and allow Microphone access.'));
+          .catch(() => alert('Microphone blocked! Click the lock/camera icon in your Chrome address bar and allow Microphone access.'));
       });
   });
 }
 
-// --- PeerJS Networking (Unified Popup & Workspace Sync) ---
+// --- PeerJS Networking (With Safe Connection Guards) ---
 function initPeerNetwork() {
   getState(['pulse_my_code'], (res) => {
     myCode = res.pulse_my_code;
@@ -359,13 +355,17 @@ function initPeerNetwork() {
     if (document.getElementById('myCodeDisplay')) document.getElementById('myCodeDisplay').textContent = myCode;
 
     const peerId = IS_POPUP ? `pulse-pop-${myCode}` : `pulse-ws-${myCode}`;
-    if (peer) peer.destroy();
+    if (peer) {
+      try { peer.destroy(); } catch (e) {}
+    }
     peer = new Peer(peerId);
 
     peer.on('open', () => connectToAllFriends());
     peer.on('connection', (conn) => handleIncomingConnection(conn));
+    peer.on('error', (err) => console.warn('Peer notice:', err.type));
 
     peer.on('call', (call) => {
+      if (!call || !call.peer) return;
       currentCall = call;
       playSound(ringtoneAudio);
       const callerCode = call.peer.replace(/^pulse-(ws|pop|bg)-/, '');
@@ -380,23 +380,27 @@ function initPeerNetwork() {
 }
 
 function connectToAllFriends() {
+  if (!peer || !peer.open) return;
   getState(['pulse_friends'], (res) => {
     (res.pulse_friends || []).forEach(f => connectToCode(f.code));
   });
 }
 
 function connectToCode(targetCode) {
-  if (!peer || targetCode === myCode) return;
+  if (!peer || !peer.open || !targetCode || targetCode === myCode) return;
   ['pulse-ws-', 'pulse-pop-', 'pulse-bg-'].forEach(prefix => {
     const fullId = prefix + targetCode;
     if (!liveConns[fullId] || !liveConns[fullId].open) {
-      const conn = peer.connect(fullId);
-      handleIncomingConnection(conn);
+      try {
+        const conn = peer.connect(fullId);
+        if (conn) handleIncomingConnection(conn);
+      } catch (e) {}
     }
   });
 }
 
 function handleIncomingConnection(conn) {
+  if (!conn || !conn.peer) return;
   const senderCode = conn.peer.replace(/^pulse-(ws|pop|bg)-/, '');
 
   conn.on('open', () => {
@@ -457,7 +461,7 @@ function handleIncomingConnection(conn) {
             time: Date.now(),
             self: false
           });
-          conn.send({ type: 'READ_ACK', msgId: payload.msgId });
+          if (conn.open) conn.send({ type: 'READ_ACK', msgId: payload.msgId });
           notifyIfNotViewing(senderCode, senderCode, payload.text || 'Sent media', payload.msgId);
         }
       });
@@ -471,6 +475,10 @@ function handleIncomingConnection(conn) {
   conn.on('close', () => {
     delete liveConns[conn.peer];
     scheduleRefresh();
+  });
+
+  conn.on('error', () => {
+    delete liveConns[conn.peer];
   });
 }
 
@@ -504,7 +512,6 @@ function sendPayloadToCode(targetCode, payload) {
   const bgConn = liveConns[`pulse-bg-${targetCode}`];
   let sent = false;
 
-  // Send only once to active Workspace or Popup to avoid duplicate messages
   if (wsConn && wsConn.open) { wsConn.send(payload); sent = true; }
   else if (popConn && popConn.open) { popConn.send(payload); sent = true; }
   else if (bgConn && bgConn.open) { bgConn.send(payload); sent = true; }
@@ -540,7 +547,6 @@ function saveMessageToHistory(chatId, msgObj) {
   getState(['pulse_history'], (res) => {
     const history = res.pulse_history || {};
     if (!history[chatId]) history[chatId] = [];
-    // Deduplicate by msgId so popup + workspace never double-save
     if (!history[chatId].some(m => m.id === msgObj.id)) {
       history[chatId].push(msgObj);
       setState({ pulse_history: history });
@@ -741,7 +747,6 @@ function handleSendMessage(extraPayload = {}) {
   if (!text && !extraPayload.audioData) return;
   if (!activeTarget) return;
 
-  // Check for banned phrases ("67", "6-7", "6 7")
   const matchedBan = BANNED_PHRASES.find(phrase => text.includes(phrase));
   if (matchedBan) {
     if (input) input.value = '';
@@ -827,7 +832,6 @@ function bindUIEvents() {
       };
     });
 
-    // Gift Card Code Redemption
     document.getElementById('redeemCodeBtn').onclick = () => {
       const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
       if (VALID_GIFT_CODES.includes(code)) {
@@ -842,7 +846,6 @@ function bindUIEvents() {
 
     document.getElementById('applyProThemeBtn').onclick = () => updateSetting('theme', 'pro-obsidian');
 
-    // Test Mic Live Button
     document.getElementById('testMicBtn').onclick = () => {
       const status = document.getElementById('micTestStatus');
       status.textContent = 'Requesting microphone access...';
@@ -891,7 +894,6 @@ function bindUIEvents() {
       e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
     };
 
-    // Settings Bindings
     document.getElementById('saveDisplayNameBtn').onclick = () => updateSetting('displayName', document.getElementById('setDisplayName').value.trim() || 'User');
     document.getElementById('saveActivityBtn').onclick = () => updateSetting('customActivity', document.getElementById('setCustomActivity').value.trim());
     document.getElementById('applyRecoverCodeBtn').onclick = () => {
