@@ -536,6 +536,14 @@ function initPeerNetwork() {
 function openWorkspaceTab() {
   if (!IS_WEB_HOSTED && chrome?.runtime?.sendMessage) {
     chrome.runtime.sendMessage({ type: 'OPEN_WORKSPACE' });
+  } else if (IS_WEB_HOSTED && EXT_ID && chrome?.runtime?.sendMessage) {
+    try {
+      chrome.runtime.sendMessage(EXT_ID, { type: 'OPEN_WORKSPACE' }, () => {
+        if (chrome.runtime.lastError) window.open(window.location.href, '_blank');
+      });
+    } catch (e) {
+      window.open(window.location.href, '_blank');
+    }
   } else {
     window.open(window.location.href, '_blank');
   }
@@ -892,14 +900,22 @@ function refreshAllViews() {
     const history = res.pulse_history || {};
     const settings = res.pulse_settings || {};
 
+    if (IS_POPUP) {
+      renderList('friendsList', friends, 'dm', settings);
+      renderList('groupsList', groups, 'group', settings);
+      renderRequestsList('requestsList', requests);
+      renderActiveChat(history, settings);
+      return;
+    }
+
     const badge = document.getElementById('reqBadge');
     if (badge) {
       badge.textContent = requests.length;
       badge.style.display = requests.length > 0 ? 'inline-block' : 'none';
     }
 
-    const mode = document.getElementById('railGroups').classList.contains('active') ? 'group' :
-                 document.getElementById('railRequests').classList.contains('active') ? 'req' : 'dm';
+    const mode = document.getElementById('railGroups')?.classList.contains('active') ? 'group' :
+                 document.getElementById('railRequests')?.classList.contains('active') ? 'req' : 'dm';
     if (mode === 'req') renderRequestsList('sidebarList', requests);
     else if (mode === 'group') renderList('sidebarList', groups, 'group', settings);
     else renderList('sidebarList', friends, 'dm', settings);
@@ -937,6 +953,9 @@ function renderList(containerId, items, type, settings) {
     el.onclick = (e) => {
       if (e.target.closest('[data-remove-friend]')) return;
       activeTarget = { type, id, name: item.name, members: item.members, admin: item.admin, icon: item.icon };
+      if (IS_POPUP && document.getElementById('tabChat')) {
+        document.getElementById('tabChat').click();
+      }
       scheduleRefresh();
     };
     const remBtn = el.querySelector('[data-remove-friend]');
@@ -1000,7 +1019,6 @@ function formatMessageText(rawText, settings) {
   if (settings.autoEmoji !== false) {
     out = out.replace(/:\)/g, '😊').replace(/:\(/g, '😢').replace(/<3/g, '❤️').replace(/:D/g, '😄');
   }
-  // Spoiler formatting ||text||
   if (settings.spoilerMode !== 'always') {
     out = out.replace(/\|\|(.+?)\|\|/g, '<span class="spoiler-box" onclick="this.classList.toggle(\'revealed\')">$1</span>');
   } else {
@@ -1010,9 +1028,11 @@ function formatMessageText(rawText, settings) {
 }
 
 function renderActiveChat(history, settings) {
-  const titleEl = document.getElementById('activeChatTitle');
-  const box = document.getElementById('messagesBox');
-  const callBtn = document.getElementById('wsCallBtn');
+  const titleEl = document.getElementById('activeChatTitle') || document.getElementById('popupChatTitle');
+  const box = document.getElementById('messagesBox') || document.getElementById('popupMessagesBox');
+  if (!titleEl || !box) return;
+
+  const callBtn = document.getElementById('wsCallBtn') || document.getElementById('popupCallBtn');
   const addMemberBtn = document.getElementById('addGroupMemberBtn');
   const grpSetBtn = document.getElementById('groupSettingsBtn');
 
@@ -1075,8 +1095,8 @@ function renderActiveChat(history, settings) {
 }
 
 // --- Sending Messages + Restricted Phrases + TTS + Easter Eggs ---
-function handleSendMessage() {
-  const input = document.getElementById('msgInput');
+function handleSendMessage(customInputId) {
+  const input = document.getElementById(customInputId || 'msgInput') || document.getElementById('popupMsgInput');
   let text = input ? input.value.trim() : '';
   if (!text) return;
 
@@ -1174,7 +1194,6 @@ function loadSettingsAndTheme() {
     const sendBtn = document.getElementById('sendBtn');
     if (sendBtn) sendBtn.style.display = s.showSendBtn === false ? 'none' : 'inline-block';
 
-    // Sync Settings Inputs
     const setVal = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.value = val; };
     const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
 
@@ -1218,6 +1237,23 @@ function updateSetting(key, val) {
 }
 
 function bindUIEvents() {
+  // Always wire up the Full ↗ Workspace button anywhere it appears
+  document.getElementById('openWorkspaceBtn')?.addEventListener('click', openWorkspaceTab);
+
+  // Popup-specific controls (if running inside popup.html)
+  if (IS_POPUP) {
+    document.getElementById('addFriendBtn')?.addEventListener('click', promptAddFriend);
+    document.getElementById('createGroupBtn')?.addEventListener('click', promptCreateGroup);
+    document.getElementById('popupCallBtn')?.addEventListener('click', openWorkspaceTab);
+    document.getElementById('popupSendBtn')?.addEventListener('click', () => handleSendMessage('popupMsgInput'));
+    document.getElementById('popupMsgInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage('popupMsgInput'); }
+    });
+    document.getElementById('copyCodeBtn')?.addEventListener('click', () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); });
+    return;
+  }
+
+  // Full Workspace controls
   if (document.getElementById('addGroupMemberBtn')) document.getElementById('addGroupMemberBtn').onclick = openGroupMemberAdder;
   if (document.getElementById('groupSettingsBtn')) document.getElementById('groupSettingsBtn').onclick = openGroupAdminModal;
   if (document.getElementById('closeGroupMemberModal')) document.getElementById('closeGroupMemberModal').onclick = () => { document.getElementById('groupMemberModal').style.display = 'none'; };

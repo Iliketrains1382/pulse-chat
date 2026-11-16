@@ -53,8 +53,6 @@
     .msg-meta { font-size: 0.68rem; opacity: 0.75; margin-top: 4px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
     .spoiler-box { background: #000; color: transparent; border-radius: 4px; padding: 0 4px; cursor: pointer; user-select: none; }
     .spoiler-box.revealed { background: rgba(255,255,255,0.15); color: inherit; }
-    .sensitive-blur { filter: blur(8px); cursor: pointer; }
-    .sensitive-blur.revealed { filter: none; }
 
     .typing-bar { padding: 4px 24px; font-size: 0.78rem; color: var(--accent); font-style: italic; height: 22px; }
     .input-bar { padding: 12px 20px; background: var(--bg-panel); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
@@ -134,6 +132,7 @@
         <button class="btn-sec" id="groupSettingsBtn" style="display:none;">⚙️ Group Settings</button>
         <button class="btn-sec" id="addGroupMemberBtn" style="display:none;">+ Add Member</button>
         <button id="wsCallBtn" style="display:none;">📹 Call</button>
+        <button class="btn-sec" id="openWorkspaceBtn" title="Open Workspace in Full Tab">Full ↗</button>
       </div>
     </div>
 
@@ -459,5 +458,33 @@
   </div>
 
   <script src="app.js"></script>
+  <script>
+    (function () {
+      const wsBtn = document.getElementById('openWorkspaceBtn');
+      if (!wsBtn) return;
+
+      // Hide the "Full ↗" button if already open in a full-size browser tab
+      if (window === window.top && window.innerWidth > 650) {
+        wsBtn.style.display = 'none';
+      }
+
+      wsBtn.addEventListener('click', () => {
+        const extId = new URLSearchParams(window.location.search).get('extId') || localStorage.getItem('pulse_ext_id');
+        if (window.location.protocol === 'chrome-extension:' && chrome?.runtime?.sendMessage) {
+          chrome.runtime.sendMessage({ type: 'OPEN_WORKSPACE' });
+        } else if (extId && chrome?.runtime?.sendMessage) {
+          try {
+            chrome.runtime.sendMessage(extId, { type: 'OPEN_WORKSPACE' }, () => {
+              if (chrome.runtime.lastError) window.open(window.location.href, '_blank');
+            });
+          } catch (e) {
+            window.open(window.location.href, '_blank');
+          }
+        } else {
+          window.open(window.location.href, '_blank');
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
