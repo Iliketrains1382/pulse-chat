@@ -2,7 +2,7 @@
 <html lang="en" data-theme="discord-dark">
 <head>
   <meta charset="UTF-8">
-  <title>Pulse Workspace</title>
+  <title>Pulse Workspace v11.0</title>
   <script src="peerjs.min.js"></script>
   <style>
     /* All 9 Original Themes Preserved */
@@ -29,7 +29,7 @@
     .rail-btn:hover, .rail-btn.active { border-radius: 14px; background: var(--accent); color: #fff; }
     .rail-badge { position: absolute; top: -2px; right: -2px; background: #ef4444; color: #fff; font-size: 0.68rem; padding: 2px 5px; border-radius: 10px; font-weight: 800; }
 
-    .sidebar { width: 265px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+    .sidebar { width: 270px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
     .sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
     .brand-title { cursor: pointer; user-select: none; }
     .list-container { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
@@ -39,14 +39,18 @@
 
     .user-footer { padding: 10px 14px; background: var(--bg-card); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
     .pro-badge { background: linear-gradient(90deg, #f59e0b, #ec4899); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 6px; font-weight: 800; margin-left: 4px; }
+    .guild-tag-pill { background: rgba(88,101,242,0.25); border: 1px solid var(--accent); color: var(--text); font-size: 0.65rem; padding: 1px 5px; border-radius: 5px; font-weight: 800; margin-left: 5px; }
     .hype-pill { font-size: 0.65rem; padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); margin-left: 4px; }
 
     .main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
     .chat-header { padding: 12px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; gap: 10px; }
     .telemetry-strip { padding: 5px 20px; background: var(--bg-card); border-bottom: 1px solid var(--border); font-size: 0.76rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+    .boost-bar-strip { display: none; padding: 6px 20px; background: linear-gradient(90deg, rgba(236,72,153,0.15), rgba(88,101,242,0.15)); border-bottom: 1px solid var(--border); font-size: 0.78rem; align-items: center; justify-content: space-between; gap: 12px; }
+    .boost-progress-track { flex: 1; max-width: 240px; height: 8px; background: var(--bg-card); border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
+    .boost-progress-fill { height: 100%; background: linear-gradient(90deg, #ec4899, #a855f7); width: 0%; transition: width 0.3s; }
 
     .messages-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--msg-gap, 10px); }
-    .empty-welcome { margin: auto; text-align: center; max-width: 420px; background: var(--bg-panel); border: 1px solid var(--border); padding: 24px; border-radius: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .empty-welcome { margin: auto; text-align: center; max-width: 440px; background: var(--bg-panel); border: 1px solid var(--border); padding: 24px; border-radius: 16px; display: flex; flex-direction: column; gap: 10px; }
     .message { max-width: 68%; padding: 10px 14px; border-radius: 14px; word-break: break-word; line-height: 1.4; position: relative; }
     .message.sent { align-self: flex-end; background: var(--sent); color: #fff; }
     .message.received { align-self: flex-start; background: var(--rec); border: 1px solid var(--border); }
@@ -61,24 +65,32 @@
     button.btn-sec { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
     button.btn-danger { background: #ef4444; color: #fff; }
     button.btn-success { background: #10b981; color: #000; }
+    button.btn-boost { background: linear-gradient(90deg, #ec4899, #8b5cf6); color: #fff; }
 
     .media-area { display: none; padding: 12px; background: #000; flex-direction: column; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
     .soundboard { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; align-items: center; }
 
-    /* Comprehensive User & Group Settings Overlay */
+    /* Full-Screen Drawers (User Settings & Group/Server Settings) */
     .settings-overlay { position: fixed; inset: 0; background: var(--bg-dark); display: none; z-index: 200; }
-    .settings-nav { width: 265px; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
+    .settings-nav { width: 270px; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
     .settings-cat { font-size: 0.68rem; font-weight: 800; color: var(--muted); text-transform: uppercase; padding: 10px 10px 4px; letter-spacing: 0.05em; }
-    .settings-tab { text-align: left; background: transparent; color: var(--muted); padding: 7px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
-    .settings-tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
-    .settings-tab.active { background: rgba(255,255,255,0.1); color: var(--text); }
-    .settings-content { flex: 1; padding: 28px 40px; overflow-y: auto; max-width: 880px; }
-    .settings-section { display: none; flex-direction: column; gap: 16px; }
-    .settings-section.active { display: flex; }
+    .settings-tab, .grp-tab { text-align: left; background: transparent; color: var(--muted); padding: 7px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+    .settings-tab:hover, .grp-tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+    .settings-tab.active, .grp-tab.active { background: rgba(255,255,255,0.1); color: var(--text); }
+    .settings-content { flex: 1; padding: 28px 40px; overflow-y: auto; max-width: 920px; }
+    .settings-section, .grp-section { display: none; flex-direction: column; gap: 16px; }
+    .settings-section.active, .grp-section.active { display: flex; }
     .setting-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; position: relative; overflow: hidden; }
     .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 12px; }
     .setting-row:last-child { border-bottom: none; }
     .pro-tag { background: linear-gradient(90deg, #f59e0b, #ec4899); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 5px; font-weight: 800; margin-left: 6px; vertical-align: middle; }
+    .boost-tag { background: linear-gradient(90deg, #ec4899, #8b5cf6); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 5px; font-weight: 800; margin-left: 6px; vertical-align: middle; }
+
+    .plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .plan-card { background: var(--bg-card); border: 2px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+    .plan-card.selected { border-color: #eab308; box-shadow: 0 0 15px rgba(234,179,8,0.2); }
+    .insight-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .insight-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
 
     .pro-lock-screen { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; z-index: 10; gap: 8px; }
     .pro-lock-screen h4 { color: #fbbf24; font-size: 1.05rem; }
@@ -92,7 +104,7 @@
 
   <div class="server-rail">
     <button class="rail-btn active" id="railFriends" title="Direct Messages">💬</button>
-    <button class="rail-btn" id="railGroups" title="Group Channels">👥</button>
+    <button class="rail-btn" id="railGroups" title="Group Servers">👥</button>
     <button class="rail-btn" id="railRequests" title="Requests">📩 <span class="rail-badge" id="reqBadge" style="display:none;">0</span></button>
     <div style="flex:1;"></div>
     <button class="rail-btn" id="archiveBtn" title="Cloud Sync & Archive">☁️</button>
@@ -107,9 +119,10 @@
     <div class="list-container" id="sidebarList"></div>
     <div class="user-footer">
       <div style="overflow:hidden;">
-        <div style="font-weight: 700; font-size: 0.88rem; display:flex; align-items:center;">
+        <div style="font-weight: 700; font-size: 0.88rem; display:flex; align-items:center; flex-wrap:wrap;">
           <span id="footerAvatar" style="margin-right:5px;">👤</span>
           <span id="footerDisplayName">User</span>
+          <span class="guild-tag-pill" id="footerGuildTag" style="display:none;"></span>
           <span class="pro-badge" id="wsProBadge" style="display:none;">PRO</span>
           <span class="hype-pill" id="footerHypeBadge" style="display:none;"></span>
         </div>
@@ -124,16 +137,25 @@
   </div>
 
   <div class="main-area">
-    <div class="chat-header">
+    <div class="chat-header" id="mainChatHeader">
       <div style="display:flex; align-items:center; gap:8px;">
         <span id="activeChatTitle">Select a Friend or Group</span>
+        <span class="boost-tag" id="headerBoostLevelBadge" style="display:none;">LEVEL 0</span>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
-        <button class="btn-sec" id="groupSettingsBtn" style="display:none;">⚙️ Group Settings</button>
+        <button class="btn-boost" id="headerBoostBtn" style="display:none;">🚀 Boost</button>
+        <button class="btn-sec" id="groupSettingsBtn" style="display:none;">⚙️ Server Settings</button>
         <button class="btn-sec" id="addGroupMemberBtn" style="display:none;">+ Add Member</button>
         <button id="wsCallBtn" style="display:none;">📹 Call</button>
         <button class="btn-sec" id="openWorkspaceBtn" title="Open Workspace in Full Tab">Full ↗</button>
       </div>
+    </div>
+
+    <!-- Group Boost Progress Strip -->
+    <div class="boost-bar-strip" id="groupBoostBarStrip">
+      <span id="boostBarLabel">🚀 Group Boosts: 0 / 2 for Level 1</span>
+      <div class="boost-progress-track"><div class="boost-progress-fill" id="boostBarFill"></div></div>
+      <span id="boostPerksSummary" style="color:var(--muted); font-size:0.72rem;">96 kbps Audio • 10 MB Uploads</span>
     </div>
 
     <div class="telemetry-strip">
@@ -175,26 +197,6 @@
     </div>
   </div>
 
-  <!-- Group / Server Admin Settings Modal -->
-  <div class="modal-overlay" id="groupAdminModal">
-    <div class="modal-card" style="text-align:left; width: 540px;">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h3>⚙️ Group / Server Settings</h3>
-        <button class="btn-sec" id="closeGroupAdminModal" style="padding:4px 8px;">✕</button>
-      </div>
-      <div class="setting-row"><div><strong>Group Name</strong></div><div style="display:flex; gap:6px;"><input type="text" id="grpEditName" /><button id="grpSaveNameBtn">Save</button></div></div>
-      <div class="setting-row"><div><strong>Group Icon Emoji</strong></div><input type="text" id="grpEditIcon" maxlength="4" style="width:70px;" placeholder="🚀" /></div>
-      <div class="setting-row"><div><strong>Group Banner Color</strong> <span class="pro-tag">Boost / Pro</span></div><input type="color" id="grpEditBanner" value="#5865f2" /></div>
-      <div class="setting-row"><div><strong>Role Accent Color</strong></div><input type="color" id="grpRoleColor" value="#10b981" /></div>
-      <div class="setting-row"><div><strong>AutoMod Blocked Words (comma-separated)</strong></div><input type="text" id="grpAutoModWords" placeholder="spam, badword" /></div>
-      <div>
-        <strong style="font-size:0.85rem;">Members & Moderation (Kick / Manage)</strong>
-        <div id="grpMemberManageList" style="display:flex; flex-direction:column; gap:6px; margin-top:8px;"></div>
-      </div>
-      <button class="btn-success" id="saveAllGroupSettingsBtn">Save Group Settings</button>
-    </div>
-  </div>
-
   <!-- Incoming Call Modal -->
   <div class="modal-overlay" id="callModal">
     <div class="modal-card">
@@ -207,15 +209,181 @@
     </div>
   </div>
 
-  <!-- Full User Settings Overlay -->
+  <!-- ========================================================================= -->
+  <!-- FULL GROUP / SERVER SETTINGS OVERLAY (ALL 7 CATEGORIES + BOOSTS)          -->
+  <!-- ========================================================================= -->
+  <div class="settings-overlay" id="groupSettingsOverlay">
+    <div class="settings-nav">
+      <div style="padding:6px 10px; font-weight:800; color:var(--accent);" id="grpDrawerTitle">SERVER SETTINGS</div>
+      <button class="grp-tab active" data-gsec="g-boosts" style="color:#f472b6;">🚀 Server Boosts & Perks</button>
+
+      <div class="settings-cat">Settings</div>
+      <button class="grp-tab" data-gsec="g-profile">🏠 Server Profile</button>
+      <button class="grp-tab" data-gsec="g-roles">🛡️ Roles & Permissions</button>
+      <button class="grp-tab" data-gsec="g-emoji">😀 Emoji & Soundboard</button>
+      <button class="grp-tab" data-gsec="g-widget">🔗 Custom Invite & Widget</button>
+
+      <div class="settings-cat">Moderation & Community</div>
+      <button class="grp-tab" data-gsec="g-safety">🔨 Safety, AutoMod & Audit Log</button>
+      <button class="grp-tab" data-gsec="g-community">🌐 Community & Insights</button>
+
+      <div class="settings-cat">User Management</div>
+      <button class="grp-tab" data-gsec="g-members">👥 Members, Invites & Access</button>
+
+      <div style="flex:1; min-height: 16px;"></div>
+      <button class="btn-danger" id="deleteGroupServerBtn" style="margin-bottom:6px;">🗑️ Delete Server</button>
+      <button class="btn-sec" id="closeGroupSettingsBtn">Close Server Settings</button>
+    </div>
+
+    <div class="settings-content">
+      <!-- 1. SERVER BOOSTS & UNALLOCATED PERKS -->
+      <div class="grp-section active" id="gsec-g-boosts">
+        <h2 style="color:#f472b6;">🚀 Server Boosts & Level Progression</h2>
+        <div class="setting-card" style="border-color:#ec4899;">
+          <div class="setting-row">
+            <div>
+              <strong id="grpBoostSummaryTitle">Server Level 0 (0 Boosts)</strong>
+              <div style="font-size:0.82rem; color:var(--muted);" id="grpAvailableBoostsText">You have 0 available boosts to allocate.</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button class="btn-boost" id="boostThisGroupBtn">🚀 Boost Server (+1)</button>
+              <button class="btn-sec" id="unboostThisGroupBtn">Remove Boost</button>
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-top:6px;">
+            <div class="insight-box"><strong>Level 1 (2 Boosts)</strong><div style="font-size:0.75rem; color:var(--muted);">128kbps Audio • 720p 60fps • 100 Emoji</div></div>
+            <div class="insight-box"><strong>Level 2 (7 Boosts)</strong><div style="font-size:0.75rem; color:var(--muted);">256kbps Audio • 1080p 60fps • 50MB Upload • Banner</div></div>
+            <div class="insight-box"><strong>Level 3 (14 Boosts)</strong><div style="font-size:0.75rem; color:var(--muted);">384kbps Audio • 100MB Upload • Vanity URL</div></div>
+          </div>
+        </div>
+
+        <h3>Additional Perks (Unallocated Boosts)</h3>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>🏷️ Server Tag / Guild Tag (4-Char Badge)</strong> <span class="boost-tag">3 Boosts</span><div style="font-size:0.78rem; color:var(--muted);">Lets members wear this group's 4-letter badge next to their name</div></div>
+            <input type="checkbox" id="grpPerkTagToggle" />
+          </div>
+          <div class="setting-row">
+            <div><strong>✨ Enhanced Role Styles (Gradient / Holographic)</strong> <span class="boost-tag">3 Boosts</span><div style="font-size:0.78rem; color:var(--muted);">Unlocks animated holographic role name colors</div></div>
+            <input type="checkbox" id="grpPerkHoloToggle" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. SERVER PROFILE (OVERVIEW) -->
+      <div class="grp-section" id="gsec-g-profile">
+        <h2>Server Profile</h2>
+        <div class="setting-card">
+          <div class="setting-row"><div><strong>Server Name</strong></div><input type="text" id="grpEditName" /></div>
+          <div class="setting-row"><div><strong>Server Icon Emoji</strong></div><input type="text" id="grpEditIcon" maxlength="4" style="width:75px;" /></div>
+          <div class="setting-row"><div><strong>4-Character Server Tag</strong> <span class="boost-tag">3 Boosts</span></div><input type="text" id="grpEditTag" maxlength="4" style="width:90px; text-transform:uppercase;" placeholder="PULS" /></div>
+          <div class="setting-row"><div><strong>Server Description</strong></div><input type="text" id="grpEditDesc" placeholder="What is this community about?" style="width:280px;" /></div>
+          <div class="setting-row"><div><strong>Server Banner Color</strong> <span class="boost-tag">Level 2</span></div><input type="color" id="grpEditBanner" value="#5865f2" /></div>
+          <div class="setting-row"><div><strong>Inactive (AFK) Timeout</strong></div><select id="grpInactiveTimeout"><option value="1">1 Minute</option><option value="5" selected>5 Minutes</option><option value="15">15 Minutes</option><option value="30">30 Minutes</option><option value="60">1 Hour</option></select></div>
+          <div class="setting-row"><div><strong>Default Notification Settings</strong></div><select id="grpDefaultNotif"><option value="all">All Messages</option><option value="mentions">Only @mentions</option></select></div>
+          <div class="setting-row"><div><strong>System Welcome & Boost Messages</strong></div><input type="checkbox" id="grpSysWelcome" checked /></div>
+          <div class="setting-row"><div><strong>Show Boost Progress Bar in Header</strong></div><input type="checkbox" id="grpShowBoostBar" checked /></div>
+          <button class="btn-success" id="saveGrpProfileBtn">Save Server Profile</button>
+        </div>
+      </div>
+
+      <!-- 3. ROLES & PERMISSIONS -->
+      <div class="grp-section" id="gsec-g-roles">
+        <h2>Roles & Granular Permissions</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Create New Role</strong></div>
+            <div style="display:flex; gap:6px;"><input type="text" id="newRoleName" placeholder="Moderator / VIP" /><input type="color" id="newRoleColor" value="#10b981" /><button id="addRoleBtn">+ Create Role</button></div>
+          </div>
+          <div id="grpRolesList" style="display:flex; flex-direction:column; gap:8px;"></div>
+        </div>
+        <div class="setting-card">
+          <strong>@everyone Default Permissions</strong>
+          <div class="setting-row"><span>Send Messages & Create Polls</span><input type="checkbox" id="permSend" checked /></div>
+          <div class="setting-row"><span>Send Text-to-Speech (/tts) Messages</span><input type="checkbox" id="permTts" checked /></div>
+          <div class="setting-row"><span>Use Soundboard & External Emoji</span><input type="checkbox" id="permSound" checked /></div>
+          <div class="setting-row"><span>Create Invites</span><input type="checkbox" id="permInvite" checked /></div>
+          <div class="setting-row"><span>Manage Messages & Kick Members (Mod)</span><input type="checkbox" id="permMod" /></div>
+        </div>
+      </div>
+
+      <!-- 4. EMOJI & SOUNDBOARD -->
+      <div class="grp-section" id="gsec-g-emoji">
+        <h2>Server Emoji & Soundboard</h2>
+        <div class="setting-card">
+          <div class="setting-row">
+            <div><strong>Add Custom Group Shortcut Emoji</strong><div style="font-size:0.78rem; color:var(--muted);">Type <code>:code:</code> in this group to auto-insert</div></div>
+            <div style="display:flex; gap:6px;"><input type="text" id="grpEmojiCode" placeholder=":hype:" style="width:95px;" /><input type="text" id="grpEmojiChar" placeholder="🔥" style="width:65px;" /><button id="addGrpEmojiBtn">Add</button></div>
+          </div>
+          <div id="grpEmojiList" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+        </div>
+      </div>
+
+      <!-- 5. CUSTOM INVITE & WIDGET -->
+      <div class="grp-section" id="gsec-g-widget">
+        <h2>Custom Invite Link, Widget & Template</h2>
+        <div class="setting-card">
+          <div class="setting-row"><div><strong>Custom Vanity Invite Code</strong> <span class="boost-tag">Level 3</span></div><div style="display:flex; gap:6px;"><input type="text" id="grpVanitySlug" placeholder="pulse.gg/mygroup" /><button id="copyVanityBtn">Copy Link</button></div></div>
+          <div class="setting-row"><div><strong>Enable Server JSON Widget</strong></div><input type="checkbox" id="grpWidgetEnabled" /></div>
+          <div class="setting-row"><div><strong>Export Server Template JSON</strong><div style="font-size:0.78rem; color:var(--muted);">Copies roles, settings, and AutoMod rules</div></div><button class="btn-sec" id="copyServerTemplateBtn">📋 Copy Template</button></div>
+        </div>
+      </div>
+
+      <!-- 6. SAFETY, AUTOMOD & AUDIT LOG -->
+      <div class="grp-section" id="gsec-g-safety">
+        <h2>Moderation, AutoMod & Audit Log</h2>
+        <div class="setting-card">
+          <div class="setting-row"><div><strong>Verification Level</strong></div><select id="grpVerifyLevel"><option value="none">None (Unrestricted)</option><option value="low">Low (Verified Peer Code)</option><option value="high">High (Member for 10+ mins)</option></select></div>
+          <div class="setting-row"><div><strong>Require Rules Screening Agreement</strong></div><input type="checkbox" id="grpRulesScreen" /></div>
+          <div class="setting-row"><div><strong>AutoMod Keyword Blocklist (comma-separated)</strong></div><input type="text" id="grpAutoModWords" placeholder="spam, badword, raid" style="width:250px;" /></div>
+          <div class="setting-row"><div><strong>Mention Spam Limit (Max @mentions per msg)</strong></div><input type="number" id="grpMentionLimit" min="1" max="50" value="5" style="width:75px;" /></div>
+          <button class="btn-success" id="saveAutoModBtn">Save Safety Rules</button>
+        </div>
+        <h3>📜 Audit Log</h3>
+        <div class="setting-card" id="grpAuditLogBox" style="max-height:180px; overflow-y:auto; font-size:0.8rem; color:var(--muted);"></div>
+      </div>
+
+      <!-- 7. COMMUNITY & SERVER INSIGHTS -->
+      <div class="grp-section" id="gsec-g-community">
+        <h2>Community & Server Insights</h2>
+        <div class="setting-card">
+          <div class="setting-row"><div><strong>Enable Community Features & Discovery</strong></div><input type="checkbox" id="grpCommunityEnabled" /></div>
+          <div class="setting-row"><div><strong>Server Welcome Banner & Rules Text</strong></div><input type="text" id="grpRulesText" placeholder="Be respectful and have fun!" style="width:260px;" /></div>
+        </div>
+        <h3>📊 Server Insights Dashboard</h3>
+        <div class="insight-grid">
+          <div class="insight-box"><h2 id="insMemberCount" style="color:var(--accent);">0</h2><div style="font-size:0.78rem; color:var(--muted);">Total Members</div></div>
+          <div class="insight-box"><h2 id="insMsgCount" style="color:#10b981;">0</h2><div style="font-size:0.78rem; color:var(--muted);">Messages Sent</div></div>
+          <div class="insight-box"><h2 id="insBoostCount" style="color:#f472b6;">0</h2><div style="font-size:0.78rem; color:var(--muted);">Active Boosts</div></div>
+        </div>
+      </div>
+
+      <!-- 8. USER MANAGEMENT (MEMBERS, INVITES & BANS) -->
+      <div class="grp-section" id="gsec-g-members">
+        <h2>User Management: Members, Invites & Bans</h2>
+        <div class="setting-card">
+          <div class="setting-row"><div><strong>Server Access Mode</strong></div><select id="grpAccessMode"><option value="invite">Invite Only</option><option value="open">Open Join</option></select></div>
+          <div class="setting-row"><div><strong>Active Group Join Code</strong></div><div style="display:flex; gap:6px;"><code id="grpJoinCodeDisplay" style="padding:6px 10px; background:var(--bg-card); border-radius:8px;">GRP-0000</code><button id="copyGrpJoinCodeBtn">Copy Invite</button></div></div>
+        </div>
+        <h3>Member Directory (Kick / Ban / Timeout)</h3>
+        <div class="setting-card" id="grpMemberManageList"></div>
+        <h3>Banned Users</h3>
+        <div class="setting-card" id="grpBannedList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- FULL USER SETTINGS OVERLAY (SUBSCRIPTION PULSE PRO + ALL 15 SECTIONS)     -->
+  <!-- ========================================================================= -->
   <div class="settings-overlay" id="settingsOverlay">
     <div class="settings-nav">
-      <div class="settings-cat">Pulse Pro & Billing</div>
-      <button class="settings-tab active" data-sec="pro" style="color:#fbbf24;">⭐ Pulse Pro & Gift Inventory</button>
+      <div class="settings-cat">Pulse Pro Subscription</div>
+      <button class="settings-tab active" data-sec="pro" style="color:#fbbf24;">⭐ Pulse Pro & Boosts</button>
 
       <div class="settings-cat">User Settings</div>
       <button class="settings-tab" data-sec="account">👤 My Account & Standing</button>
-      <button class="settings-tab" data-sec="profiles">🪪 Profiles & Avatars</button>
+      <button class="settings-tab" data-sec="profiles">🪪 Profiles & Guild Tag</button>
       <button class="settings-tab" data-sec="social">🛡️ Content & Social</button>
       <button class="settings-tab" data-sec="privacy">🔒 Data & Privacy</button>
       <button class="settings-tab" data-sec="connections">🔗 Connections</button>
@@ -238,21 +406,48 @@
     </div>
 
     <div class="settings-content">
-      <!-- 1. PULSE PRO & GIFT INVENTORY -->
+      <!-- 1. PULSE PRO SUBSCRIPTION & INCLUDED BOOSTS -->
       <div class="settings-section active" id="sec-pro">
-        <h2 style="color:#fbbf24;">⭐ Pulse Pro & Gift Inventory</h2>
+        <h2 style="color:#fbbf24;">⭐ Pulse Pro Subscription & Boosts</h2>
         <div class="setting-card" style="border-color:#eab308;">
           <div class="setting-row">
-            <div><strong>Membership Status</strong><div style="font-size:0.82rem; color:var(--muted);" id="proStatusDesc">Checking status...</div></div>
+            <div>
+              <strong>Current Subscription</strong>
+              <div style="font-size:0.82rem; color:var(--muted);" id="proStatusDesc">Checking status...</div>
+              <div style="font-size:0.78rem; color:#f472b6; margin-top:2px;" id="proRenewalDateText"></div>
+            </div>
             <span class="pro-badge" id="proStatusPill" style="font-size:0.85rem; padding:4px 10px;">CHECKING</span>
           </div>
+
+          <div class="plan-grid">
+            <div class="plan-card" id="planMonthlyCard">
+              <div style="display:flex; justify-content:space-between;"><strong>Pulse Pro Monthly</strong><span style="color:#fbbf24; font-weight:800;">$0.00 / mo</span></div>
+              <div style="font-size:0.78rem; color:var(--muted);">• Includes <strong>2 Free Group Boosts</strong><br>• 1080p 60fps Screen Share & 30-min quota<br>• Custom Typing Indicator & Profile Themes</div>
+              <button id="subMonthlyBtn" style="background:#eab308; color:#000; margin-top:4px;">Subscribe Monthly</button>
+            </div>
+            <div class="plan-card" id="planYearlyCard">
+              <div style="display:flex; justify-content:space-between;"><strong>Pulse Pro Yearly</strong><span style="color:#10b981; font-weight:800;">$0.00 / yr (Save 20%)</span></div>
+              <div style="font-size:0.78rem; color:var(--muted);">• Includes <strong>2 Free Group Boosts</strong><br>• All Pro perks + Yearly Supporter Badge<br>• Instant renewal management</div>
+              <button id="subYearlyBtn" style="background:linear-gradient(90deg, #f59e0b, #ec4899); color:#fff; margin-top:4px;">Subscribe Yearly</button>
+            </div>
+          </div>
+
           <div class="setting-row">
-            <div><strong>Redeem Gift Card Code</strong><div style="font-size:0.8rem; color:var(--muted);">Unlock lifetime Pulse Pro perks</div></div>
+            <div><strong>Redeem Gift Card or Friend Pass Code</strong><div style="font-size:0.8rem; color:var(--muted);">Activate lifetime Pulse Pro or a 3-Day Friend Pass</div></div>
             <div style="display:flex; gap:6px;"><input type="text" id="giftCodeInput" placeholder="PULSE-PRO-XXXX-XXXX" style="width:195px; text-transform:uppercase;" /><button id="redeemCodeBtn" style="background:#eab308; color:#000;">Redeem</button></div>
           </div>
+          <div class="setting-row" id="cancelSubRow" style="display:none;">
+            <div><strong>Manage Subscription</strong><div style="font-size:0.78rem; color:var(--muted);">Cancel auto-renewal at any time</div></div>
+            <button class="btn-danger" id="cancelSubBtn">Cancel Subscription</button>
+          </div>
         </div>
+
         <div class="setting-card">
-          <div class="pro-lock-screen pro-gate"><h4>🔒 Pulse Pro Exclusive</h4><p>Friend Passes and Custom Typing Indicators require Pulse Pro.</p></div>
+          <div class="pro-lock-screen pro-gate"><h4>🔒 Pulse Pro Exclusive</h4><p>Friend Passes, 2 Included Group Boosts, and Custom Typing Indicators require an active Pulse Pro subscription.</p></div>
+          <div class="setting-row">
+            <div><strong>Included Group Boost Inventory</strong><div style="font-size:0.8rem; color:var(--muted);" id="userBoostInventoryText">2 / 2 Boosts Available</div></div>
+            <span class="boost-tag">2 BOOSTS INCLUDED</span>
+          </div>
           <div class="setting-row">
             <div><strong>Generate Pulse Pro Friend Pass</strong><div style="font-size:0.8rem; color:var(--muted);">Share a 3-day trial pass code with a friend</div></div>
             <button id="genFriendPassBtn" style="background:#eab308; color:#000;">🎟️ Generate Pass</button>
@@ -277,11 +472,12 @@
         </div>
       </div>
 
-      <!-- 3. PROFILES & AVATARS -->
+      <!-- 3. PROFILES & GUILD TAG -->
       <div class="settings-section" id="sec-profiles">
-        <h2>Profiles & Avatars</h2>
+        <h2>Profiles & Server Tag</h2>
         <div class="setting-card">
           <div class="setting-row"><div><strong>Avatar Icon / Emoji</strong></div><input type="text" id="setAvatarEmoji" maxlength="4" style="width:75px;" placeholder="😎" /></div>
+          <div class="setting-row"><div><strong>Equipped Server / Guild Tag (4-Char)</strong><div style="font-size:0.78rem; color:var(--muted);">Shown next to your username in chat</div></div><input type="text" id="setEquippedTag" maxlength="4" style="width:90px; text-transform:uppercase;" placeholder="PULS" /></div>
           <div class="setting-row"><div><strong>Pronouns</strong></div><input type="text" id="setPronouns" placeholder="they/them, he/him, she/her" /></div>
           <div class="setting-row"><div><strong>About Me (Bio)</strong></div><input type="text" id="setBio" placeholder="Tell friends about yourself..." style="width:260px;" /></div>
           <div class="setting-row"><div><strong>Solid Banner Color</strong></div><input type="color" id="setBannerColor" value="#5865f2" /></div>
@@ -406,7 +602,7 @@
       <div class="settings-section" id="sec-keybinds">
         <h2>Custom Keybinds</h2>
         <div class="setting-card">
-          <div class="setting-row"><div><strong>Toggle Mute Microphone Shortcut</strong><div style="font-size:0.8rem; color:var(--muted);">Click button and press any key combo</div></div><button class="btn-sec" id="bindMuteKeyBtn">Key: M</button></div>
+          <div class="setting-row"><div><strong>Toggle Mute Microphone Shortcut</strong></div><button class="btn-sec" id="bindMuteKeyBtn">Key: M</button></div>
           <div class="setting-row"><div><strong>Quick Focus Message Box</strong></div><button class="btn-sec" id="bindFocusKeyBtn">Key: /</button></div>
         </div>
       </div>
@@ -445,12 +641,12 @@
           </div>
         </div>
         <div class="setting-card">
-          <strong>🚀 What's New in Pulse Chat v10.1</strong>
+          <strong>🚀 What's New in Pulse Chat v11.0</strong>
           <ul style="font-size:0.84rem; color:var(--muted); padding-left:18px; display:flex; flex-direction:column; gap:6px;">
-            <li>Added full 15-section User Settings & Group/Server Admin Settings panel.</li>
-            <li>Added Pulse Pro Friend Pass generator, Custom Typing Indicators, and Profile Themes.</li>
-            <li>Added Accessibility tools: Saturation slider, High Contrast, Compact Mode, and <code>/tts</code> Text-to-Speech.</li>
-            <li>Added Streamer Mode, Spoiler tags (<code>||secret||</code>), Auto-Emoticons, and Data Package JSON Export.</li>
+            <li><strong>Pulse Pro Subscription Plans:</strong> Monthly & Yearly subscription tiers with renewal tracking and <strong>2 included Group Boosts</strong>.</li>
+            <li><strong>Group Boosts & Level Progression:</strong> Boost any group toward Level 1 (2 Boosts), Level 2 (7 Boosts), and Level 3 (14 Boosts) to unlock 4-character Guild Tags, Holographic Roles, and HD Audio/Uploads.</li>
+            <li><strong>Full Server Admin Drawer:</strong> Added Roles, Custom Group Emojis, AutoMod Keyword Rules, Audit Log, Server Insights, and Member Kick/Ban/Timeout tools.</li>
+            <li><strong>v9.1 Backward Compatibility:</strong> Instant message delivery to friends still running Pulse Chat v9.1.</li>
           </ul>
         </div>
       </div>
@@ -462,12 +658,9 @@
     (function () {
       const wsBtn = document.getElementById('openWorkspaceBtn');
       if (!wsBtn) return;
-
-      // Hide the "Full ↗" button if already open in a full-size browser tab
       if (window === window.top && window.innerWidth > 650) {
         wsBtn.style.display = 'none';
       }
-
       wsBtn.addEventListener('click', () => {
         const extId = new URLSearchParams(window.location.search).get('extId') || localStorage.getItem('pulse_ext_id');
         if (window.location.protocol === 'chrome-extension:' && chrome?.runtime?.sendMessage) {

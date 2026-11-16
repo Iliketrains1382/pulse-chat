@@ -4,17 +4,19 @@ const URL_PARAMS = new URLSearchParams(window.location.search);
 const EXT_ID = URL_PARAMS.get('extId') || localStorage.getItem('pulse_ext_id') || '';
 if (URL_PARAMS.get('extId')) localStorage.setItem('pulse_ext_id', URL_PARAMS.get('extId'));
 
-const syncChannel = new BroadcastChannel('pulse_chat_v10_sync');
+const syncChannel = new BroadcastChannel('pulse_chat_v11_sync');
 
 let peer = null;
 let myCode = '';
 let activeTarget = null;
 let liveConns = {};
+let connectingLocks = {};
 let currentCall = null;
 let localStream = null;
 let typingTimeout = null;
 let isMuted = false;
 let renderTimer = null;
+let lastRenderSignature = '';
 let logoClickCount = 0;
 
 const VALID_GIFT_CODES = [
@@ -98,7 +100,7 @@ function archiveOldHistory(manual = false) {
 
     setState({ pulse_history: history, pulse_archive: archive }, () => {
       if (manual) alert(`☁️ Cloud Sync Complete! Archived ${archivedCount} older messages safely.`);
-      scheduleRefresh();
+      scheduleRefresh(true);
     });
   });
 }
@@ -116,13 +118,10 @@ function removeFriendAndRecords(targetCode, alsoBlock = false) {
 
     if (alsoBlock && !blocked.includes(code)) blocked.push(code);
 
-    ['pulse-ws-', 'pulse-pop-', 'pulse-bg-'].forEach(prefix => {
-      const fullId = prefix + code;
-      if (liveConns[fullId]) {
-        try { liveConns[fullId].close(); } catch (e) {}
-        delete liveConns[fullId];
-      }
-    });
+    if (liveConns[code]) {
+      try { liveConns[code].close(); } catch (e) {}
+      delete liveConns[code];
+    }
 
     if (activeTarget && activeTarget.id === code) activeTarget = null;
 
@@ -133,17 +132,44 @@ function removeFriendAndRecords(targetCode, alsoBlock = false) {
       pulse_outbox: outbox,
       pulse_pending_inbox: pending,
       pulse_blocked: blocked
-    }, scheduleRefresh);
+    }, () => scheduleRefresh(true));
   });
 }
 
-// --- Pro & 3-Day Trial Checker ---
+// --- Pulse Pro Subscription & Included Boosts ---
 function checkProAccess(cb) {
-  getState(['pulse_pro_permanent', 'pulse_trial_start'], (res) => {
+  getState(['pulse_pro_permanent', 'pulse_pro_sub', 'pulse_trial_start', 'pulse_boost_allocations'], (res) => {
+    const allocations = res.pulse_boost_allocations || {};
+    const usedBoosts = Object.values(allocations).reduce((a, b) => a + b, 0);
+
     if (res.pulse_pro_permanent) {
-      cb({ hasPro: true, statusText: 'Pulse Pro Active (Lifetime Gift Code)', isTrial: false });
+      cb({
+        hasPro: true,
+        plan: 'Lifetime Gift Pro',
+        statusText: 'Pulse Pro Active (Lifetime Gift Code)',
+        renewalText: 'Never expires • 2 Group Boosts included',
+        isTrial: false,
+        totalBoosts: 2,
+        availableBoosts: Math.max(0, 2 - usedBoosts)
+      });
       return;
     }
+
+    const sub = res.pulse_pro_sub;
+    if (sub && sub.active && sub.expiresAt > Date.now()) {
+      const renewDate = new Date(sub.expiresAt).toLocaleDateString();
+      cb({
+        hasPro: true,
+        plan: sub.plan,
+        statusText: `Pulse Pro ${sub.plan === 'yearly' ? 'Yearly' : 'Monthly'} Subscription Active`,
+        renewalText: `Next renewal: ${renewDate} • 2 Group Boosts included`,
+        isTrial: false,
+        totalBoosts: 2,
+        availableBoosts: Math.max(0, 2 - usedBoosts)
+      });
+      return;
+    }
+
     let trialStart = res.pulse_trial_start;
     if (!trialStart) {
       trialStart = Date.now();
@@ -152,15 +178,31 @@ function checkProAccess(cb) {
     const elapsed = Date.now() - trialStart;
     if (elapsed < THREE_DAYS_MS) {
       const hoursLeft = Math.ceil((THREE_DAYS_MS - elapsed) / (1000 * 60 * 60));
-      cb({ hasPro: true, statusText: `3-Day Free Trial Active (${hoursLeft} hours remaining)`, isTrial: true });
+      cb({
+        hasPro: true,
+        plan: 'trial',
+        statusText: `3-Day Free Trial Active (${hoursLeft} hours remaining)`,
+        renewalText: 'Subscribe to Monthly or Yearly to keep Pro & 2 Group Boosts',
+        isTrial: true,
+        totalBoosts: 2,
+        availableBoosts: Math.max(0, 2 - usedBoosts)
+      });
     } else {
-      cb({ hasPro: false, statusText: 'Free Trial Expired — Redeem a Gift Card Code to unlock Pro', isTrial: false });
+      cb({
+        hasPro: false,
+        plan: 'free',
+        statusText: 'Free Tier — Subscribe to Pulse Pro or redeem a Gift Code',
+        renewalText: 'No active subscription',
+        isTrial: false,
+        totalBoosts: 0,
+        availableBoosts: 0
+      });
     }
   });
 }
 
 function updateProUI() {
-  checkProAccess(({ hasPro, statusText, isTrial }) => {
+  checkProAccess(({ hasPro, plan, statusText, renewalText, isTrial, totalBoosts, availableBoosts }) => {
     const popBadge = document.getElementById('popProBadge');
     const wsBadge = document.getElementById('wsProBadge');
     if (popBadge) {
@@ -173,9 +215,19 @@ function updateProUI() {
     }
 
     const descEl = document.getElementById('proStatusDesc');
+    const renewEl = document.getElementById('proRenewalDateText');
     const pillEl = document.getElementById('proStatusPill');
+    const boostInvEl = document.getElementById('userBoostInventoryText');
+    const cancelRow = document.getElementById('cancelSubRow');
+
     if (descEl) descEl.textContent = statusText;
-    if (pillEl) pillEl.textContent = hasPro ? (isTrial ? '3-DAY TRIAL' : 'PULSE PRO') : 'STANDARD TIER';
+    if (renewEl) renewEl.textContent = renewalText;
+    if (pillEl) pillEl.textContent = hasPro ? (isTrial ? '3-DAY TRIAL' : 'PULSE PRO') : 'FREE TIER';
+    if (boostInvEl) boostInvEl.textContent = `${availableBoosts} / ${totalBoosts} Group Boosts Available`;
+    if (cancelRow) cancelRow.style.display = (plan === 'monthly' || plan === 'yearly') ? 'flex' : 'none';
+
+    document.getElementById('planMonthlyCard')?.classList.toggle('selected', plan === 'monthly');
+    document.getElementById('planYearlyCard')?.classList.toggle('selected', plan === 'yearly');
 
     document.querySelectorAll('.pro-gate').forEach(gate => {
       gate.style.display = hasPro ? 'none' : 'flex';
@@ -203,7 +255,7 @@ function renderSoundboardSettings(hasPro) {
 
       if (isLocked) {
         row.innerHTML = `
-          <div><strong>Slot ${i + 1} (Pulse Pro Exclusive)</strong><div style="font-size:0.78rem; color:#fbbf24;">Requires Pulse Pro</div></div>
+          <div><strong>Slot ${i + 1} (Pulse Pro Exclusive)</strong><div style="font-size:0.78rem; color:#fbbf24;">Requires Pulse Pro Subscription</div></div>
           <button onclick="document.querySelector('[data-sec=pro]').click()" style="background:#eab308; color:#000;">🔒 Upgrade</button>
         `;
       } else {
@@ -285,6 +337,58 @@ function renderCallSoundboard(hasPro) {
   });
 }
 
+// --- Group Boosts & Level Helper ---
+function getGroupBoostLevel(boostCount) {
+  if (boostCount >= 14) return { level: 3, nextGoal: 14, audio: '384 kbps', upload: '100 MB', stream: '1080p 60fps' };
+  if (boostCount >= 7) return { level: 2, nextGoal: 14, audio: '256 kbps', upload: '50 MB', stream: '1080p 60fps' };
+  if (boostCount >= 2) return { level: 1, nextGoal: 7, audio: '128 kbps', upload: '10 MB', stream: '720p 60fps' };
+  return { level: 0, nextGoal: 2, audio: '96 kbps', upload: '10 MB', stream: '720p 30fps' };
+}
+
+function addAuditEntry(group, text) {
+  if (!group.auditLog) group.auditLog = [];
+  group.auditLog.unshift({ time: Date.now(), actor: myCode, text });
+  if (group.auditLog.length > 50) group.auditLog.pop();
+}
+
+function boostActiveGroup(delta) {
+  if (!activeTarget || activeTarget.type !== 'group') return;
+  checkProAccess(({ hasPro, availableBoosts }) => {
+    if (!hasPro) {
+      alert('⭐ Subscribe to Pulse Pro (or activate the 3-day trial) to get 2 Group Boosts!');
+      return;
+    }
+    getState(['pulse_groups', 'pulse_boost_allocations'], (res) => {
+      const groups = res.pulse_groups || [];
+      const allocations = res.pulse_boost_allocations || {};
+      const grp = groups.find(g => g.id === activeTarget.id);
+      if (!grp) return;
+
+      const currentUserAlloc = allocations[grp.id] || 0;
+      if (delta > 0) {
+        if (availableBoosts <= 0) return alert('You have used all 2 of your included Group Boosts! Remove a boost from another group or upgrade.');
+        allocations[grp.id] = currentUserAlloc + 1;
+        grp.boosts = (grp.boosts || 0) + 1;
+        addAuditEntry(grp, `boosted the server (+1 Boost → ${grp.boosts} total)`);
+      } else {
+        if (currentUserAlloc <= 0) return alert('You have no active boosts on this server to remove.');
+        allocations[grp.id] = currentUserAlloc - 1;
+        grp.boosts = Math.max(0, (grp.boosts || 0) - 1);
+        addAuditEntry(grp, `removed a server boost (-1 Boost)`);
+      }
+
+      setState({ pulse_groups: groups, pulse_boost_allocations: allocations }, () => {
+        (grp.members || []).forEach(mc => {
+          if (mc !== myCode) sendPayloadToCode(mc, { type: 'GROUP_INVITE_SYNC', group: grp });
+        });
+        updateProUI();
+        if (document.getElementById('groupSettingsOverlay')?.style.display === 'flex') openGroupSettingsDrawer();
+        scheduleRefresh(true);
+      });
+    });
+  });
+}
+
 // --- Text-to-Speech Helper ---
 function speakText(text) {
   if (!('speechSynthesis' in window)) return;
@@ -320,7 +424,7 @@ function initEasterEggs() {
       logoClickCount++;
       if (logoClickCount === 7) {
         logoClickCount = 0;
-        alert('🎉 SECRET FOUND! You discovered the Pulse v10.1 Developer Easter Egg! Try /party, /flip, /matrix, or /tts in chat!');
+        alert('🎉 SECRET FOUND! You discovered the Pulse v11.0 Developer Easter Egg! Try /party, /flip, /matrix, or /tts in chat!');
       }
     };
   }
@@ -331,10 +435,10 @@ function initEasterEggs() {
   }
 }
 
-// --- Initialization & Cross-Tab Sync ---
-function scheduleRefresh() {
+// --- Initialization & Fast Cross-Tab Sync ---
+function scheduleRefresh(force = false) {
   if (renderTimer) cancelAnimationFrame(renderTimer);
-  renderTimer = requestAnimationFrame(() => refreshAllViews());
+  renderTimer = requestAnimationFrame(() => refreshAllViews(force));
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -346,33 +450,38 @@ document.addEventListener('DOMContentLoaded', () => {
   deliverPendingInbox();
   checkWeeklyScreenQuota();
   populateMicrophones();
-  scheduleRefresh();
+  scheduleRefresh(true);
 
-  // Fast P2P reconnect & 2-second outbox flush
-  setInterval(connectToAllFriends, 8000);
-  setInterval(flushOfflineQueue, 2000);
+  // Clean heartbeat: check dead connections every 12s & flush outbox every 1.5s
+  setInterval(() => {
+    if (peer && peer.disconnected && !peer.destroyed) {
+      try { peer.reconnect(); } catch (e) {}
+    }
+    connectToAllFriends();
+  }, 12000);
+  setInterval(flushOfflineQueue, 1500);
 
   syncChannel.onmessage = () => {
     loadSettingsAndTheme();
     updateProUI();
-    scheduleRefresh();
+    scheduleRefresh(true);
   };
 
   if (!IS_WEB_HOSTED && chrome?.storage?.onChanged) {
     chrome.storage.onChanged.addListener((changes) => {
       if (changes.pulse_settings) loadSettingsAndTheme();
-      if (changes.pulse_pro_permanent || changes.pulse_trial_start) updateProUI();
+      if (changes.pulse_pro_permanent || changes.pulse_pro_sub || changes.pulse_trial_start || changes.pulse_boost_allocations) updateProUI();
       if (changes.pulse_pending_inbox) deliverPendingInbox();
       if (changes.pulse_friends || changes.pulse_groups || changes.pulse_requests || changes.pulse_history) {
-        scheduleRefresh();
+        scheduleRefresh(true);
         flushOfflineQueue();
       }
     });
   } else {
     setInterval(() => {
       deliverPendingInbox();
-      scheduleRefresh();
-    }, 2500);
+      scheduleRefresh(false);
+    }, 3000);
   }
 });
 
@@ -487,6 +596,7 @@ function getMediaStreamWithFallback(cb) {
   });
 }
 
+// --- Low-Latency P2P Engine (STUN + TURN Relay + Single-Tunnel Deduplication) ---
 function initPeerNetwork() {
   getState(['pulse_my_code', 'pulse_settings'], (res) => {
     myCode = res.pulse_my_code;
@@ -501,17 +611,27 @@ function initPeerNetwork() {
 
     const peerId = IS_POPUP ? `pulse-pop-${myCode}` : `pulse-ws-${myCode}`;
     if (peer) { try { peer.destroy(); } catch (e) {} }
+    liveConns = {};
+    connectingLocks = {};
 
-    // Fast ICE/STUN Configuration
     peer = new Peer(peerId, {
       debug: 0,
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:global.stun.twilio.com:3478' }
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
         ],
-        iceCandidatePoolSize: 4
+        iceCandidatePoolSize: 2
       }
     });
 
@@ -522,14 +642,35 @@ function initPeerNetwork() {
       connectToAllFriends();
       flushOfflineQueue();
     });
+
+    peer.on('disconnected', () => {
+      if (document.getElementById('meshStatusText')) {
+        document.getElementById('meshStatusText').textContent = `🟡 Reconnecting (${myCode})...`;
+      }
+      setTimeout(() => {
+        if (peer && peer.disconnected && !peer.destroyed) {
+          try { peer.reconnect(); } catch (e) {}
+        }
+      }, 1000);
+    });
+
     peer.on('connection', (conn) => handleIncomingConnection(conn));
+
     peer.on('error', (err) => {
-      if (err.type !== 'peer-unavailable') console.log('Peer status:', err.type);
+      if (err.type === 'peer-unavailable' && err.message) {
+        // Fallback to legacy v9.1 or background peer ID if primary workspace ID isn't open
+        const match = err.message.match(/pulse-ws-([A-Z0-9]{4})/);
+        if (match && match[1]) {
+          const targetCode = match[1];
+          delete connectingLocks[targetCode];
+          connectFallbackPrefixes(targetCode);
+        }
+      }
     });
 
     peer.on('call', (call) => {
       if (!call || !call.peer) return;
-      const callerCode = call.peer.replace(/^pulse-(ws|pop|bg)-/, '');
+      const callerCode = call.peer.replace(/^pulse-(ws-|pop-|bg-)?/, '');
       getState(['pulse_blocked'], (blkRes) => {
         if ((blkRes.pulse_blocked || []).includes(callerCode)) {
           try { call.close(); } catch (e) {}
@@ -571,28 +712,46 @@ function connectToAllFriends() {
   });
 }
 
+// Opens ONE clean primary Workspace tunnel per friend (eliminates 3x offer collisions)
 function connectToCode(targetCode) {
   if (!peer || !peer.open || !targetCode || targetCode === myCode) return;
-  ['pulse-ws-', 'pulse-bg-'].forEach(prefix => {
-    const fullId = prefix + targetCode;
-    const existing = liveConns[fullId];
-    if (!existing || (!existing.open && existing.peerConnection?.iceConnectionState !== 'checking')) {
-      try {
-        const conn = peer.connect(fullId, { reliable: true });
-        if (conn) handleIncomingConnection(conn);
-      } catch (e) {}
-    }
+  const code = targetCode.trim().toUpperCase();
+
+  if (liveConns[code] && liveConns[code].open) return;
+  if (connectingLocks[code] && Date.now() - connectingLocks[code] < 6000) return;
+
+  connectingLocks[code] = Date.now();
+  try {
+    const conn = peer.connect(`pulse-ws-${code}`, { reliable: true });
+    if (conn) handleIncomingConnection(conn);
+  } catch (e) {}
+}
+
+// Only dialed if `pulse-ws-CODE` is offline (supports background worker & v9.1 friends)
+function connectFallbackPrefixes(code) {
+  if (!peer || !peer.open || (liveConns[code] && liveConns[code].open)) return;
+  ['pulse-bg-', 'pulse-'].forEach(prefix => {
+    try {
+      const conn = peer.connect(`${prefix}${code}`, { reliable: true });
+      if (conn) handleIncomingConnection(conn);
+    } catch (e) {}
   });
 }
 
 function handleIncomingConnection(conn) {
   if (!conn || !conn.peer) return;
-  const senderCode = conn.peer.replace(/^pulse-(ws|pop|bg)-/, '');
+  const senderCode = conn.peer.replace(/^pulse-(ws-|pop-|bg-)?/, '');
 
   conn.on('open', () => {
-    liveConns[conn.peer] = conn;
+    delete connectingLocks[senderCode];
+    // Keep the newest active connection for this user
+    if (liveConns[senderCode] && liveConns[senderCode] !== conn && liveConns[senderCode].open) {
+      try { conn.close(); } catch (e) {}
+      return;
+    }
+    liveConns[senderCode] = conn;
     flushOfflineQueue();
-    scheduleRefresh();
+    scheduleRefresh(true);
   });
 
   conn.on('data', (payload) => {
@@ -621,7 +780,7 @@ function handleIncomingConnection(conn) {
           const existingIdx = groups.findIndex(g => g.id === payload.group.id);
           if (existingIdx >= 0) groups[existingIdx] = payload.group;
           else groups.push(payload.group);
-          setState({ pulse_groups: groups }, scheduleRefresh);
+          setState({ pulse_groups: groups }, () => scheduleRefresh(true));
         });
         return;
       }
@@ -637,6 +796,7 @@ function handleIncomingConnection(conn) {
         saveMessageToHistory(payload.groupId, {
           id: payload.msgId,
           sender: payload.senderName || senderCode,
+          guildTag: payload.guildTag || '',
           text: payload.text,
           time: Date.now(),
           self: false
@@ -658,6 +818,7 @@ function handleIncomingConnection(conn) {
             saveMessageToHistory(senderCode, {
               id: payload.msgId,
               sender: senderCode,
+              guildTag: payload.guildTag || '',
               text: payload.text,
               time: Date.now(),
               self: false
@@ -676,12 +837,14 @@ function handleIncomingConnection(conn) {
   });
 
   conn.on('close', () => {
-    delete liveConns[conn.peer];
-    scheduleRefresh();
+    if (liveConns[senderCode] === conn) delete liveConns[senderCode];
+    delete connectingLocks[senderCode];
+    scheduleRefresh(true);
   });
 
   conn.on('error', () => {
-    delete liveConns[conn.peer];
+    if (liveConns[senderCode] === conn) delete liveConns[senderCode];
+    delete connectingLocks[senderCode];
   });
 }
 
@@ -707,29 +870,33 @@ function deliverPendingInbox() {
       }
     });
 
-    setState({ pulse_pending_inbox: [], pulse_history: history, pulse_requests: requests }, scheduleRefresh);
+    setState({ pulse_pending_inbox: [], pulse_history: history, pulse_requests: requests }, () => scheduleRefresh(true));
   });
 }
 
 function sendPayloadToCode(targetCode, payload) {
-  const wsConn = liveConns[`pulse-ws-${targetCode}`];
-  const bgConn = liveConns[`pulse-bg-${targetCode}`];
-  const popConn = liveConns[`pulse-pop-${targetCode}`];
+  const code = targetCode.trim().toUpperCase();
+  const conn = liveConns[code];
   let sent = false;
 
-  if (wsConn && wsConn.open) { wsConn.send(payload); sent = true; }
-  else if (bgConn && bgConn.open) { bgConn.send(payload); sent = true; }
-  else if (popConn && popConn.open) { popConn.send(payload); sent = true; }
+  if (conn && conn.open) {
+    try {
+      conn.send(payload);
+      sent = true;
+    } catch (e) {
+      delete liveConns[code];
+    }
+  }
 
   if (!sent && payload.type !== 'TYPING') {
     getState(['pulse_outbox'], (res) => {
       const outbox = res.pulse_outbox || [];
       if (!outbox.some(item => item.payload?.msgId === payload.msgId)) {
-        outbox.push({ targetCode, payload });
+        outbox.push({ targetCode: code, payload });
         setState({ pulse_outbox: outbox });
       }
     });
-    connectToCode(targetCode);
+    connectToCode(code);
   }
   return sent;
 }
@@ -746,7 +913,9 @@ function flushOfflineQueue() {
         remaining.push(item);
       }
     });
-    setState({ pulse_outbox: remaining });
+    if (remaining.length !== outbox.length) {
+      setState({ pulse_outbox: remaining });
+    }
   });
 }
 
@@ -756,7 +925,7 @@ function saveMessageToHistory(chatId, msgObj) {
     if (!history[chatId]) history[chatId] = [];
     if (!history[chatId].some(m => m.id === msgObj.id)) {
       history[chatId].push(msgObj);
-      setState({ pulse_history: history }, scheduleRefresh);
+      setState({ pulse_history: history }, () => scheduleRefresh(true));
     }
   });
 }
@@ -769,7 +938,7 @@ function applyMessageReaction(chatId, msgId, emoji) {
     if (msg) {
       if (!msg.reactions) msg.reactions = {};
       msg.reactions[emoji] = (msg.reactions[emoji] || 0) + 1;
-      setState({ pulse_history: history }, scheduleRefresh);
+      setState({ pulse_history: history }, () => scheduleRefresh(true));
     }
   });
 }
@@ -780,7 +949,7 @@ function markMessageDelivered(chatId, msgId) {
     if (history[chatId]) {
       const msg = history[chatId].find(m => m.id === msgId);
       if (msg && msg.status !== 'Read') msg.status = 'Sent';
-      setState({ pulse_history: history }, scheduleRefresh);
+      setState({ pulse_history: history }, () => scheduleRefresh(true));
     }
   });
 }
@@ -791,7 +960,7 @@ function markMessageRead(chatId, msgId) {
     if (history[chatId]) {
       const msg = history[chatId].find(m => m.id === msgId);
       if (msg) msg.status = 'Read';
-      setState({ pulse_history: history }, scheduleRefresh);
+      setState({ pulse_history: history }, () => scheduleRefresh(true));
     }
   });
 }
@@ -801,7 +970,7 @@ function addRequest(reqObj) {
     const reqs = res.pulse_requests || [];
     if (!reqs.some(r => r.code === reqObj.code && r.type === reqObj.type)) {
       reqs.push(reqObj);
-      setState({ pulse_requests: reqs }, scheduleRefresh);
+      setState({ pulse_requests: reqs }, () => scheduleRefresh(true));
       playSound(chimeAudio);
     }
   });
@@ -856,12 +1025,13 @@ function openGroupMemberAdder() {
           row.querySelector('button').onclick = () => {
             currentGroup.members.push(f.code);
             activeTarget.members = currentGroup.members;
+            addAuditEntry(currentGroup, `added member ${f.code}`);
             setState({ pulse_groups: groups }, () => {
               currentGroup.members.forEach(mc => {
                 if (mc !== myCode) sendPayloadToCode(mc, { type: 'GROUP_INVITE_SYNC', group: currentGroup });
               });
               openGroupMemberAdder();
-              scheduleRefresh();
+              scheduleRefresh(true);
             });
           };
         }
@@ -874,45 +1044,126 @@ function openGroupMemberAdder() {
   });
 }
 
-// --- Group / Server Admin Settings Modal ---
-function openGroupAdminModal() {
+// --- Full Group / Server Settings Drawer ---
+function openGroupSettingsDrawer() {
   if (!activeTarget || activeTarget.type !== 'group') return;
-  getState(['pulse_groups'], (res) => {
+  getState(['pulse_groups', 'pulse_history'], (res) => {
     const groups = res.pulse_groups || [];
+    const history = res.pulse_history || {};
     const grp = groups.find(g => g.id === activeTarget.id);
     if (!grp) return;
 
-    document.getElementById('grpEditName').value = grp.name;
-    document.getElementById('grpEditIcon').value = grp.icon || '#';
-    document.getElementById('grpEditBanner').value = grp.bannerColor || '#5865f2';
-    document.getElementById('grpRoleColor').value = grp.roleColor || '#10b981';
-    document.getElementById('grpAutoModWords').value = (grp.autoModWords || []).join(', ');
+    const boosts = grp.boosts || 0;
+    const bInfo = getGroupBoostLevel(boosts);
+    document.getElementById('grpDrawerTitle').textContent = `${grp.name.toUpperCase()} — SERVER SETTINGS`;
+    document.getElementById('grpBoostSummaryTitle').textContent = `Server Level ${bInfo.level} (${boosts} Boosts)`;
 
+    checkProAccess(({ availableBoosts }) => {
+      document.getElementById('grpAvailableBoostsText').textContent = `You have ${availableBoosts} available Pulse Pro boost(s) to allocate.`;
+    });
+
+    document.getElementById('grpEditName').value = grp.name || '';
+    document.getElementById('grpEditIcon').value = grp.icon || '#';
+    document.getElementById('grpEditTag').value = grp.tag || '';
+    document.getElementById('grpEditDesc').value = grp.description || '';
+    document.getElementById('grpEditBanner').value = grp.bannerColor || '#5865f2';
+    document.getElementById('grpShowBoostBar').checked = grp.showBoostBar !== false;
+    document.getElementById('grpPerkTagToggle').checked = !!grp.perkTagEnabled;
+    document.getElementById('grpPerkHoloToggle').checked = !!grp.perkHoloEnabled;
+
+    const rolesList = document.getElementById('grpRolesList');
+    rolesList.innerHTML = '';
+    (grp.roles || []).forEach((role, rIdx) => {
+      const rRow = document.createElement('div');
+      rRow.className = 'setting-row';
+      rRow.innerHTML = `
+        <span style="color:${role.color}; font-weight:800;">● ${role.name}</span>
+        <button class="btn-danger" style="padding:3px 8px; font-size:0.75rem;" data-del-role="${rIdx}">Delete</button>
+      `;
+      rRow.querySelector('[data-del-role]').onclick = () => {
+        grp.roles.splice(rIdx, 1);
+        addAuditEntry(grp, `deleted role ${role.name}`);
+        setState({ pulse_groups: groups }, openGroupSettingsDrawer);
+      };
+      rolesList.appendChild(rRow);
+    });
+
+    const emojiList = document.getElementById('grpEmojiList');
+    emojiList.innerHTML = '';
+    (grp.emojis || []).forEach((em, eIdx) => {
+      const pill = document.createElement('span');
+      pill.style.cssText = 'background:var(--bg-card); border:1px solid var(--border); padding:4px 8px; border-radius:8px; font-size:0.8rem; cursor:pointer;';
+      pill.textContent = `${em.char} ${em.code} ✕`;
+      pill.onclick = () => {
+        grp.emojis.splice(eIdx, 1);
+        setState({ pulse_groups: groups }, openGroupSettingsDrawer);
+      };
+      emojiList.appendChild(pill);
+    });
+
+    document.getElementById('grpAutoModWords').value = (grp.autoModWords || []).join(', ');
+    document.getElementById('grpRulesScreen').checked = !!grp.rulesScreening;
+    document.getElementById('grpRulesText').value = grp.rulesText || '';
+
+    const auditBox = document.getElementById('grpAuditLogBox');
+    const logs = grp.auditLog || [];
+    auditBox.innerHTML = logs.length === 0
+      ? '<div>No administrative changes recorded yet.</div>'
+      : logs.map(l => `<div style="padding:4px 0; border-bottom:1px solid var(--border);"><strong>${l.actor}</strong> ${l.text} <span style="opacity:0.6;">(${new Date(l.time).toLocaleTimeString()})</span></div>`).join('');
+
+    document.getElementById('insMemberCount').textContent = (grp.members || []).length;
+    document.getElementById('insMsgCount').textContent = (history[grp.id] || []).length;
+    document.getElementById('insBoostCount').textContent = boosts;
+
+    document.getElementById('grpJoinCodeDisplay').textContent = grp.id;
     const memberList = document.getElementById('grpMemberManageList');
     memberList.innerHTML = '';
     (grp.members || []).forEach(mc => {
       const mRow = document.createElement('div');
       mRow.className = 'setting-row';
       mRow.innerHTML = `
-        <span><strong>${mc}</strong> ${mc === grp.admin ? '<span class="pro-badge">ADMIN</span>' : ''}</span>
-        ${mc !== myCode ? `<button class="btn-danger" data-kick-member="${mc}" style="padding:4px 8px; font-size:0.75rem;">Kick</button>` : '<span style="font-size:0.75rem; color:var(--muted);">You</span>'}
+        <span><strong>${mc}</strong> ${mc === grp.admin ? '<span class="pro-badge">OWNER</span>' : ''}</span>
+        ${mc !== myCode ? `
+          <div style="display:flex; gap:6px;">
+            <button class="btn-sec" data-kick-member="${mc}" style="padding:4px 8px; font-size:0.75rem;">Kick</button>
+            <button class="btn-danger" data-ban-member="${mc}" style="padding:4px 8px; font-size:0.75rem;">Ban</button>
+          </div>
+        ` : '<span style="font-size:0.75rem; color:var(--muted);">You</span>'}
       `;
-      const kickBtn = mRow.querySelector('[data-kick-member]');
-      if (kickBtn) {
-        kickBtn.onclick = () => {
-          grp.members = grp.members.filter(m => m !== mc);
-          setState({ pulse_groups: groups }, () => { openGroupAdminModal(); scheduleRefresh(); });
-        };
-      }
+      mRow.querySelector('[data-kick-member]')?.addEventListener('click', () => {
+        grp.members = grp.members.filter(m => m !== mc);
+        addAuditEntry(grp, `kicked member ${mc}`);
+        setState({ pulse_groups: groups }, () => { openGroupSettingsDrawer(); scheduleRefresh(true); });
+      });
+      mRow.querySelector('[data-ban-member]')?.addEventListener('click', () => {
+        grp.members = grp.members.filter(m => m !== mc);
+        if (!grp.banned) grp.banned = [];
+        if (!grp.banned.includes(mc)) grp.banned.push(mc);
+        addAuditEntry(grp, `banned member ${mc}`);
+        setState({ pulse_groups: groups }, () => { openGroupSettingsDrawer(); scheduleRefresh(true); });
+      });
       memberList.appendChild(mRow);
     });
 
-    document.getElementById('groupAdminModal').style.display = 'flex';
+    const bannedList = document.getElementById('grpBannedList');
+    const banned = grp.banned || [];
+    bannedList.innerHTML = banned.length === 0
+      ? '<div style="font-size:0.8rem; color:var(--muted);">No banned users.</div>'
+      : banned.map(bc => `<div class="setting-row"><span>${bc}</span><button class="btn-sec" data-unban="${bc}" style="padding:3px 8px; font-size:0.75rem;">Revoke Ban</button></div>`).join('');
+    bannedList.querySelectorAll('[data-unban]').forEach(btn => {
+      btn.onclick = () => {
+        grp.banned = grp.banned.filter(b => b !== btn.dataset.unban);
+        addAuditEntry(grp, `unbanned ${btn.dataset.unban}`);
+        setState({ pulse_groups: groups }, openGroupSettingsDrawer);
+      };
+    });
+
+    document.getElementById('groupSettingsOverlay').style.display = 'flex';
   });
 }
 
-// --- Rendering Views ---
-function refreshAllViews() {
+// --- Rendering Views (With Diff Guard to Prevent UI Lag) ---
+function refreshAllViews(force = false) {
   getState(['pulse_friends', 'pulse_groups', 'pulse_requests', 'pulse_history', 'pulse_settings'], (res) => {
     const friends = res.pulse_friends || [];
     const groups = res.pulse_groups || [];
@@ -920,11 +1171,19 @@ function refreshAllViews() {
     const history = res.pulse_history || {};
     const settings = res.pulse_settings || {};
 
+    const onlineCodes = Object.keys(liveConns).filter(k => liveConns[k]?.open).join(',');
+    const activeMsgs = activeTarget ? (history[activeTarget.id] || []) : [];
+    const lastMsg = activeMsgs[activeMsgs.length - 1];
+    const sig = `${activeTarget?.id}|${friends.length}|${groups.length}|${requests.length}|${activeMsgs.length}|${lastMsg?.id}|${lastMsg?.status}|${onlineCodes}`;
+
+    if (!force && sig === lastRenderSignature) return;
+    lastRenderSignature = sig;
+
     if (IS_POPUP) {
       renderList('friendsList', friends, 'dm', settings);
       renderList('groupsList', groups, 'group', settings);
       renderRequestsList('requestsList', requests);
-      renderActiveChat(history, settings);
+      renderActiveChat(history, settings, groups);
       return;
     }
 
@@ -940,7 +1199,7 @@ function refreshAllViews() {
     else if (mode === 'group') renderList('sidebarList', groups, 'group', settings);
     else renderList('sidebarList', friends, 'dm', settings);
 
-    renderActiveChat(history, settings);
+    renderActiveChat(history, settings, groups);
   });
 }
 
@@ -956,14 +1215,18 @@ function renderList(containerId, items, type, settings) {
 
   items.forEach(item => {
     const id = type === 'dm' ? item.code : item.id;
-    const isOnline = type === 'dm' && (liveConns[`pulse-ws-${id}`]?.open || liveConns[`pulse-pop-${id}`]?.open || liveConns[`pulse-bg-${id}`]?.open);
+    const isOnline = type === 'dm' && !!liveConns[id]?.open;
     const el = document.createElement('div');
     el.className = `list-card ${activeTarget && activeTarget.id === id ? 'active' : ''}`;
     const displayId = settings.streamerMode ? '••••' : id;
+    const boostCount = item.boosts || 0;
 
     el.innerHTML = `
       <div style="flex:1; overflow:hidden;">
-        <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${type === 'group' ? (item.icon || '#') + ' ' : ''}${item.name}</div>
+        <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          ${type === 'group' ? (item.icon || '#') + ' ' : ''}${item.name}
+          ${type === 'group' && boostCount > 0 ? `<span class="boost-tag">🚀 ${boostCount}</span>` : ''}
+        </div>
         <div style="font-size:0.68rem; color:var(--muted);">${type === 'dm' ? displayId : `${(item.members || []).length} members`}</div>
       </div>
       <div style="display:flex; align-items:center; gap:6px;">
@@ -978,7 +1241,7 @@ function renderList(containerId, items, type, settings) {
       if (IS_POPUP && document.getElementById('tabChat')) {
         document.getElementById('tabChat').click();
       }
-      scheduleRefresh();
+      scheduleRefresh(true);
     };
     const remBtn = el.querySelector('[data-remove-friend]');
     if (remBtn) {
@@ -1022,24 +1285,29 @@ function renderRequestsList(containerId, requests) {
         const friends = res.pulse_friends || [];
         if (!friends.some(f => f.code === req.code)) friends.push({ code: req.code, name: req.code });
         reqs.splice(idx, 1);
-        setState({ pulse_requests: reqs, pulse_friends: friends }, () => { connectToCode(req.code); scheduleRefresh(); });
+        setState({ pulse_requests: reqs, pulse_friends: friends }, () => { connectToCode(req.code); scheduleRefresh(true); });
       });
     };
     el.querySelector('[data-decline]').onclick = () => {
       getState(['pulse_requests'], (res) => {
         const reqs = res.pulse_requests || [];
         reqs.splice(idx, 1);
-        setState({ pulse_requests: reqs }, scheduleRefresh);
+        setState({ pulse_requests: reqs }, () => scheduleRefresh(true));
       });
     };
     container.appendChild(el);
   });
 }
 
-function formatMessageText(rawText, settings) {
+function formatMessageText(rawText, settings, groupObj) {
   let out = rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
   if (settings.autoEmoji !== false) {
     out = out.replace(/:\)/g, '😊').replace(/:\(/g, '😢').replace(/<3/g, '❤️').replace(/:D/g, '😄');
+  }
+  if (groupObj && Array.isArray(groupObj.emojis)) {
+    groupObj.emojis.forEach(em => {
+      if (em.code && em.char) out = out.split(em.code).join(em.char);
+    });
   }
   if (settings.spoilerMode !== 'always') {
     out = out.replace(/\|\|(.+?)\|\|/g, '<span class="spoiler-box" onclick="this.classList.toggle(\'revealed\')">$1</span>');
@@ -1049,7 +1317,7 @@ function formatMessageText(rawText, settings) {
   return out;
 }
 
-function renderActiveChat(history, settings) {
+function renderActiveChat(history, settings, groups = []) {
   const titleEl = document.getElementById('activeChatTitle') || document.getElementById('popupChatTitle');
   const box = document.getElementById('messagesBox') || document.getElementById('popupMessagesBox');
   if (!titleEl || !box) return;
@@ -1057,26 +1325,53 @@ function renderActiveChat(history, settings) {
   const callBtn = document.getElementById('wsCallBtn') || document.getElementById('popupCallBtn');
   const addMemberBtn = document.getElementById('addGroupMemberBtn');
   const grpSetBtn = document.getElementById('groupSettingsBtn');
+  const headerBoostBtn = document.getElementById('headerBoostBtn');
+  const levelBadge = document.getElementById('headerBoostLevelBadge');
+  const boostStrip = document.getElementById('groupBoostBarStrip');
 
   if (!activeTarget) {
     titleEl.textContent = 'Select a Friend or Group';
     if (callBtn) callBtn.style.display = 'none';
     if (addMemberBtn) addMemberBtn.style.display = 'none';
     if (grpSetBtn) grpSetBtn.style.display = 'none';
+    if (headerBoostBtn) headerBoostBtn.style.display = 'none';
+    if (levelBadge) levelBadge.style.display = 'none';
+    if (boostStrip) boostStrip.style.display = 'none';
     box.innerHTML = `
       <div class="empty-welcome">
         <div style="font-size:2rem;">⚡</div>
-        <strong>Welcome to Pulse Chat v10.1</strong>
-        <p style="font-size:0.82rem; color:var(--muted);">Select a friend or group on the left, or open ⚙️ User Settings to customize your profile, accessibility, soundboard, and Pulse Pro perks.</p>
+        <strong>Welcome to Pulse Chat v11.0</strong>
+        <p style="font-size:0.82rem; color:var(--muted);">Select a friend or group on the left, or open ⚙️ User Settings to manage your Pulse Pro Subscription & 2 Group Boosts.</p>
       </div>
     `;
     return;
   }
 
-  titleEl.textContent = `${activeTarget.type === 'group' ? (activeTarget.icon || '#') + ' ' : ''}${activeTarget.name}`;
+  const currentGroup = activeTarget.type === 'group' ? groups.find(g => g.id === activeTarget.id) : null;
+  titleEl.textContent = `${activeTarget.type === 'group' ? ((currentGroup?.icon || activeTarget.icon || '#') + ' ') : ''}${currentGroup?.name || activeTarget.name}`;
+
   if (callBtn) callBtn.style.display = activeTarget.type === 'dm' ? 'inline-block' : 'none';
   if (addMemberBtn) addMemberBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
   if (grpSetBtn) grpSetBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
+  if (headerBoostBtn) headerBoostBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
+
+  if (currentGroup && levelBadge && boostStrip) {
+    const boosts = currentGroup.boosts || 0;
+    const bInfo = getGroupBoostLevel(boosts);
+    levelBadge.style.display = 'inline-block';
+    levelBadge.textContent = `LEVEL ${bInfo.level}`;
+    if (currentGroup.showBoostBar !== false) {
+      boostStrip.style.display = 'flex';
+      document.getElementById('boostBarLabel').textContent = `🚀 Group Boosts: ${boosts} / ${bInfo.nextGoal} for Level ${Math.min(3, bInfo.level + 1)}`;
+      document.getElementById('boostBarFill').style.width = `${Math.min(100, (boosts / bInfo.nextGoal) * 100)}%`;
+      document.getElementById('boostPerksSummary').textContent = `${bInfo.audio} Audio • ${bInfo.upload} Uploads • ${bInfo.stream}`;
+    } else {
+      boostStrip.style.display = 'none';
+    }
+  } else {
+    if (levelBadge) levelBadge.style.display = 'none';
+    if (boostStrip) boostStrip.style.display = 'none';
+  }
 
   const limit = parseInt(settings.renderLimit || '150', 10);
   const msgs = (history[activeTarget.id] || []).slice(-limit);
@@ -1085,19 +1380,21 @@ function renderActiveChat(history, settings) {
   if (msgs.length === 0) {
     box.innerHTML = `
       <div class="empty-welcome">
-        <strong>Start of ${activeTarget.name}</strong>
+        <strong>Start of ${currentGroup?.name || activeTarget.name}</strong>
         <p style="font-size:0.8rem; color:var(--muted);">End-to-end peer synced. Try <code>||spoiler||</code> or <code>/tts hello</code>!</p>
       </div>
     `;
     return;
   }
 
+  const frag = document.createDocumentFragment();
   msgs.forEach(m => {
     const div = document.createElement('div');
     div.className = `message ${m.self ? 'sent' : 'received'}`;
     const timeStr = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const statusHtml = (m.self && m.status) ? `<span>${m.status === 'Queued' ? '🕒' : m.status === 'Read' ? '✓✓' : '✓'}</span>` : '';
-    const senderLabel = (!m.self && activeTarget.type === 'group') ? `<div style="font-size:0.7rem; font-weight:800; color:var(--accent); margin-bottom:2px;">${m.sender}</div>` : '';
+    const tagPill = m.guildTag ? `<span class="guild-tag-pill">${m.guildTag}</span>` : '';
+    const senderLabel = (!m.self && activeTarget.type === 'group') ? `<div style="font-size:0.7rem; font-weight:800; color:var(--accent); margin-bottom:2px;">${m.sender}${tagPill}</div>` : '';
     const devCopyBtn = settings.devMode ? `<button class="btn-sec" style="padding:1px 5px; font-size:0.65rem;" onclick="navigator.clipboard.writeText('${m.id}')">ID</button>` : '';
 
     let reactHtml = '';
@@ -1105,33 +1402,26 @@ function renderActiveChat(history, settings) {
       reactHtml = `<div style="display:flex; gap:4px; margin-top:4px;">` + Object.entries(m.reactions).map(([em, cnt]) => `<span style="background:rgba(0,0,0,0.25); border-radius:10px; padding:1px 6px; font-size:0.7rem;">${em} ${cnt}</span>`).join('') + `</div>`;
     }
 
-    div.innerHTML = `${senderLabel}<div>${formatMessageText(m.text || '', settings)}</div>${reactHtml}<div class="msg-meta"><span>${timeStr}</span>${devCopyBtn}${statusHtml}</div>`;
+    div.innerHTML = `${senderLabel}<div>${formatMessageText(m.text || '', settings, currentGroup)}</div>${reactHtml}<div class="msg-meta"><span>${timeStr}</span>${devCopyBtn}${statusHtml}</div>`;
     div.ondblclick = () => {
       if (settings.showReactions === false) return;
       applyMessageReaction(activeTarget.id, m.id, '🔥');
       if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'REACTION', chatId: myCode, msgId: m.id, emoji: '🔥' });
     };
-    box.appendChild(div);
+    frag.appendChild(div);
   });
+  box.appendChild(frag);
   box.scrollTop = box.scrollHeight;
 }
 
-// --- Sending Messages + Restricted Phrases + TTS + Easter Eggs ---
+// --- Sending Messages + Group AutoMod + Restricted Phrases + TTS ---
 function handleSendMessage(customInputId) {
   const input = document.getElementById(customInputId || 'msgInput') || document.getElementById('popupMsgInput') || document.querySelector('textarea, input[type="text"]');
   let text = input ? input.value.trim() : '';
   if (!text) return;
 
-  if (text.toLowerCase() === '/flip') {
-    document.body.classList.toggle('flip-mode');
-    input.value = '';
-    return;
-  }
-  if (text.toLowerCase() === '/matrix') {
-    updateSetting('theme', 'matrix');
-    input.value = '';
-    return;
-  }
+  if (text.toLowerCase() === '/flip') { document.body.classList.toggle('flip-mode'); input.value = ''; return; }
+  if (text.toLowerCase() === '/matrix') { updateSetting('theme', 'matrix'); input.value = ''; return; }
   if (text.toLowerCase() === '/party') {
     input.value = '';
     const colors = ['cyber-dark', 'emerald', 'purple', 'crimson', 'sunset', 'pro-obsidian'];
@@ -1162,32 +1452,50 @@ function handleSendMessage(customInputId) {
     return;
   }
 
-  const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
-  const msgObj = { id: msgId, sender: myCode, text, time: Date.now(), self: true, status: 'Sent' };
+  getState(['pulse_settings', 'pulse_groups'], (res) => {
+    const settings = res.pulse_settings || {};
+    const groups = res.pulse_groups || [];
+    const guildTag = (settings.equippedTag || '').toUpperCase();
 
-  if (activeTarget.type === 'dm') {
-    const sent = sendPayloadToCode(activeTarget.id, { type: 'DM', msgId, text, tts: isTts });
-    msgObj.status = sent ? 'Sent' : 'Queued';
-    saveMessageToHistory(activeTarget.id, msgObj);
-  } else if (activeTarget.type === 'group') {
-    msgObj.sender = 'You';
-    saveMessageToHistory(activeTarget.id, msgObj);
-    (activeTarget.members || []).forEach(mc => {
-      if (mc !== myCode) {
-        sendPayloadToCode(mc, {
-          type: 'GROUP_MSG',
-          msgId,
-          groupId: activeTarget.id,
-          groupName: activeTarget.name,
-          members: activeTarget.members,
-          senderName: myCode,
-          text
-        });
+    if (activeTarget.type === 'group') {
+      const grp = groups.find(g => g.id === activeTarget.id);
+      if (grp && Array.isArray(grp.autoModWords)) {
+        const hit = grp.autoModWords.find(w => w && text.toLowerCase().includes(w.toLowerCase()));
+        if (hit) {
+          alert(`🛡️ AutoMod blocked your message because it matched the server's restricted keyword: "${hit}"`);
+          return;
+        }
       }
-    });
-  }
+    }
 
-  input.value = '';
+    const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
+    const msgObj = { id: msgId, sender: myCode, guildTag, text, time: Date.now(), self: true, status: 'Sent' };
+
+    if (activeTarget.type === 'dm') {
+      const sent = sendPayloadToCode(activeTarget.id, { type: 'DM', msgId, text, guildTag, tts: isTts });
+      msgObj.status = sent ? 'Sent' : 'Queued';
+      saveMessageToHistory(activeTarget.id, msgObj);
+    } else if (activeTarget.type === 'group') {
+      msgObj.sender = 'You';
+      saveMessageToHistory(activeTarget.id, msgObj);
+      (activeTarget.members || []).forEach(mc => {
+        if (mc !== myCode) {
+          sendPayloadToCode(mc, {
+            type: 'GROUP_MSG',
+            msgId,
+            groupId: activeTarget.id,
+            groupName: activeTarget.name,
+            members: activeTarget.members,
+            senderName: myCode,
+            guildTag,
+            text
+          });
+        }
+      });
+    }
+
+    input.value = '';
+  });
 }
 
 function loadSettingsAndTheme() {
@@ -1207,6 +1515,12 @@ function loadSettingsAndTheme() {
     if (document.getElementById('footerAvatar')) document.getElementById('footerAvatar').textContent = s.avatarEmoji || '👤';
     if (document.getElementById('footerCustomActivity')) document.getElementById('footerCustomActivity').textContent = s.customActivity || 'Ready to chat';
 
+    const tagEl = document.getElementById('footerGuildTag');
+    if (tagEl) {
+      tagEl.textContent = (s.equippedTag || '').toUpperCase();
+      tagEl.style.display = s.equippedTag ? 'inline-block' : 'none';
+    }
+
     const hypeBadge = document.getElementById('footerHypeBadge');
     if (hypeBadge) {
       hypeBadge.textContent = s.hypeSquad || '';
@@ -1224,6 +1538,7 @@ function loadSettingsAndTheme() {
     setVal('setUsername', s.username || '');
     setVal('setCustomActivity', s.customActivity || '');
     setVal('setAvatarEmoji', s.avatarEmoji || '😎');
+    setVal('setEquippedTag', s.equippedTag || '');
     setVal('setPronouns', s.pronouns || '');
     setVal('setBio', s.bio || '');
     setVal('setCustomTyping', s.customTyping || '');
@@ -1253,7 +1568,7 @@ function updateSetting(key, val) {
     s[key] = val;
     setState({ pulse_settings: s }, () => {
       loadSettingsAndTheme();
-      scheduleRefresh();
+      scheduleRefresh(true);
     });
   });
 }
@@ -1265,7 +1580,6 @@ function bindUIEvents() {
   document.getElementById('sendBtn')?.addEventListener('click', () => handleSendMessage('msgInput'));
   document.getElementById('popupSendBtn')?.addEventListener('click', () => handleSendMessage('popupMsgInput'));
 
-  // Smart fallback binder for popup buttons matched by visible label
   document.querySelectorAll('button').forEach(btn => {
     const label = btn.textContent.trim();
     if (label === '+ Add' && !btn.onclick) btn.addEventListener('click', promptAddFriend);
@@ -1294,37 +1608,150 @@ function bindUIEvents() {
     return;
   }
 
-  // Full Workspace controls
-  if (document.getElementById('addGroupMemberBtn')) document.getElementById('addGroupMemberBtn').onclick = openGroupMemberAdder;
-  if (document.getElementById('groupSettingsBtn')) document.getElementById('groupSettingsBtn').onclick = openGroupAdminModal;
-  if (document.getElementById('closeGroupMemberModal')) document.getElementById('closeGroupMemberModal').onclick = () => { document.getElementById('groupMemberModal').style.display = 'none'; };
-  if (document.getElementById('closeGroupAdminModal')) document.getElementById('closeGroupAdminModal').onclick = () => { document.getElementById('groupAdminModal').style.display = 'none'; };
-  if (document.getElementById('runArchiveNowBtn')) document.getElementById('runArchiveNowBtn').onclick = () => archiveOldHistory(true);
+  document.getElementById('addGroupMemberBtn')?.addEventListener('click', openGroupMemberAdder);
+  document.getElementById('groupSettingsBtn')?.addEventListener('click', openGroupSettingsDrawer);
+  document.getElementById('headerBoostBtn')?.addEventListener('click', () => boostActiveGroup(1));
+  document.getElementById('boostThisGroupBtn')?.addEventListener('click', () => boostActiveGroup(1));
+  document.getElementById('unboostThisGroupBtn')?.addEventListener('click', () => boostActiveGroup(-1));
+  document.getElementById('closeGroupMemberModal')?.addEventListener('click', () => { document.getElementById('groupMemberModal').style.display = 'none'; });
+  document.getElementById('closeGroupSettingsBtn')?.addEventListener('click', () => { document.getElementById('groupSettingsOverlay').style.display = 'none'; });
 
-  if (document.getElementById('saveAllGroupSettingsBtn')) {
-    document.getElementById('saveAllGroupSettingsBtn').onclick = () => {
-      if (!activeTarget || activeTarget.type !== 'group') return;
-      getState(['pulse_groups'], (res) => {
-        const groups = res.pulse_groups || [];
-        const grp = groups.find(g => g.id === activeTarget.id);
-        if (!grp) return;
-        grp.name = document.getElementById('grpEditName').value.trim() || grp.name;
-        grp.icon = document.getElementById('grpEditIcon').value.trim() || '#';
-        grp.bannerColor = document.getElementById('grpEditBanner').value;
-        grp.roleColor = document.getElementById('grpRoleColor').value;
-        grp.autoModWords = document.getElementById('grpAutoModWords').value.split(',').map(w => w.trim()).filter(Boolean);
-        activeTarget.name = grp.name;
-        activeTarget.icon = grp.icon;
-        setState({ pulse_groups: groups }, () => {
-          document.getElementById('groupAdminModal').style.display = 'none';
-          scheduleRefresh();
-        });
-      });
+  document.querySelectorAll('.grp-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.grp-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.grp-section').forEach(s => s.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(`gsec-${tab.dataset.gsec}`).classList.add('active');
     };
-  }
+  });
 
+  document.getElementById('saveGrpProfileBtn')?.addEventListener('click', () => {
+    if (!activeTarget || activeTarget.type !== 'group') return;
+    getState(['pulse_groups'], (res) => {
+      const groups = res.pulse_groups || [];
+      const grp = groups.find(g => g.id === activeTarget.id);
+      if (!grp) return;
+      grp.name = document.getElementById('grpEditName').value.trim() || grp.name;
+      grp.icon = document.getElementById('grpEditIcon').value.trim() || '#';
+      grp.tag = document.getElementById('grpEditTag').value.trim().toUpperCase();
+      grp.description = document.getElementById('grpEditDesc').value.trim();
+      grp.bannerColor = document.getElementById('grpEditBanner').value;
+      grp.showBoostBar = document.getElementById('grpShowBoostBar').checked;
+      grp.perkTagEnabled = document.getElementById('grpPerkTagToggle').checked;
+      grp.perkHoloEnabled = document.getElementById('grpPerkHoloToggle').checked;
+      activeTarget.name = grp.name;
+      activeTarget.icon = grp.icon;
+      addAuditEntry(grp, 'updated Server Profile settings');
+      setState({ pulse_groups: groups }, () => { alert('✅ Server Profile Saved!'); scheduleRefresh(true); });
+    });
+  });
+
+  document.getElementById('addRoleBtn')?.addEventListener('click', () => {
+    if (!activeTarget || activeTarget.type !== 'group') return;
+    const rName = document.getElementById('newRoleName').value.trim();
+    const rColor = document.getElementById('newRoleColor').value;
+    if (!rName) return;
+    getState(['pulse_groups'], (res) => {
+      const groups = res.pulse_groups || [];
+      const grp = groups.find(g => g.id === activeTarget.id);
+      if (!grp) return;
+      if (!grp.roles) grp.roles = [];
+      grp.roles.push({ name: rName, color: rColor });
+      addAuditEntry(grp, `created role "${rName}"`);
+      document.getElementById('newRoleName').value = '';
+      setState({ pulse_groups: groups }, openGroupSettingsDrawer);
+    });
+  });
+
+  document.getElementById('addGrpEmojiBtn')?.addEventListener('click', () => {
+    if (!activeTarget || activeTarget.type !== 'group') return;
+    const code = document.getElementById('grpEmojiCode').value.trim();
+    const char = document.getElementById('grpEmojiChar').value.trim();
+    if (!code || !char) return;
+    getState(['pulse_groups'], (res) => {
+      const groups = res.pulse_groups || [];
+      const grp = groups.find(g => g.id === activeTarget.id);
+      if (!grp) return;
+      if (!grp.emojis) grp.emojis = [];
+      grp.emojis.push({ code: code.startsWith(':') ? code : `:${code}:`, char });
+      addAuditEntry(grp, `added custom emoji ${char}`);
+      document.getElementById('grpEmojiCode').value = '';
+      document.getElementById('grpEmojiChar').value = '';
+      setState({ pulse_groups: groups }, openGroupSettingsDrawer);
+    });
+  });
+
+  document.getElementById('saveAutoModBtn')?.addEventListener('click', () => {
+    if (!activeTarget || activeTarget.type !== 'group') return;
+    getState(['pulse_groups'], (res) => {
+      const groups = res.pulse_groups || [];
+      const grp = groups.find(g => g.id === activeTarget.id);
+      if (!grp) return;
+      grp.autoModWords = document.getElementById('grpAutoModWords').value.split(',').map(w => w.trim()).filter(Boolean);
+      grp.rulesScreening = document.getElementById('grpRulesScreen').checked;
+      grp.rulesText = document.getElementById('grpRulesText').value.trim();
+      addAuditEntry(grp, 'updated AutoMod & Safety rules');
+      setState({ pulse_groups: groups }, () => { alert('🛡️ Safety & AutoMod Rules Saved!'); openGroupSettingsDrawer(); });
+    });
+  });
+
+  document.getElementById('copyVanityBtn')?.addEventListener('click', () => {
+    const slug = document.getElementById('grpVanitySlug').value.trim() || activeTarget?.id;
+    navigator.clipboard.writeText(`https://iliketrains1382.github.io/pulse-chat/index.html?invite=${encodeURIComponent(slug)}`);
+    alert('🔗 Custom Invite Link Copied!');
+  });
+
+  document.getElementById('copyServerTemplateBtn')?.addEventListener('click', () => {
+    getState(['pulse_groups'], (res) => {
+      const grp = (res.pulse_groups || []).find(g => g.id === activeTarget?.id);
+      if (grp) {
+        navigator.clipboard.writeText(JSON.stringify({ name: grp.name, roles: grp.roles, autoModWords: grp.autoModWords }, null, 2));
+        alert('📋 Server Template JSON copied to clipboard!');
+      }
+    });
+  });
+
+  document.getElementById('copyGrpJoinCodeBtn')?.addEventListener('click', () => {
+    if (activeTarget) { navigator.clipboard.writeText(activeTarget.id); alert('Copied Group Invite ID: ' + activeTarget.id); }
+  });
+
+  document.getElementById('deleteGroupServerBtn')?.addEventListener('click', () => {
+    if (!activeTarget || activeTarget.type !== 'group') return;
+    const confirmName = prompt(`Type "${activeTarget.name}" to permanently delete this server:`);
+    if (confirmName !== activeTarget.name) return;
+    getState(['pulse_groups'], (res) => {
+      const groups = (res.pulse_groups || []).filter(g => g.id !== activeTarget.id);
+      activeTarget = null;
+      document.getElementById('groupSettingsOverlay').style.display = 'none';
+      setState({ pulse_groups: groups }, () => scheduleRefresh(true));
+    });
+  });
+
+  document.getElementById('subMonthlyBtn')?.addEventListener('click', () => {
+    setState({ pulse_pro_sub: { active: true, plan: 'monthly', expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 } }, () => {
+      alert('⭐ Subscribed to Pulse Pro Monthly! 2 Group Boosts added to your account.');
+      updateProUI();
+    });
+  });
+
+  document.getElementById('subYearlyBtn')?.addEventListener('click', () => {
+    setState({ pulse_pro_sub: { active: true, plan: 'yearly', expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000 } }, () => {
+      alert('⭐ Subscribed to Pulse Pro Yearly! 2 Group Boosts added to your account.');
+      updateProUI();
+    });
+  });
+
+  document.getElementById('cancelSubBtn')?.addEventListener('click', () => {
+    if (confirm('Cancel your Pulse Pro subscription?')) {
+      setState({ pulse_pro_sub: { active: false, plan: 'free', expiresAt: 0 } }, () => {
+        updateProUI();
+      });
+    }
+  });
+
+  if (document.getElementById('runArchiveNowBtn')) document.getElementById('runArchiveNowBtn').onclick = () => archiveOldHistory(true);
   if (document.getElementById('railFriends')) document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
-  if (document.getElementById('railGroups')) document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP CHANNELS', '+ Group', promptCreateGroup);
+  if (document.getElementById('railGroups')) document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP SERVERS', '+ Group', promptCreateGroup);
   if (document.getElementById('railRequests')) document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
   if (document.getElementById('railSettings')) document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
   if (document.getElementById('closeSettingsBtn')) document.getElementById('closeSettingsBtn').onclick = () => { document.getElementById('settingsOverlay').style.display = 'none'; };
@@ -1344,11 +1771,16 @@ function bindUIEvents() {
       const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
       if (VALID_GIFT_CODES.includes(code)) {
         setState({ pulse_pro_permanent: true }, () => {
-          alert('🎉 Gift Card Redeemed! Pulse Pro is now permanently unlocked!');
+          alert('🎉 Gift Card Redeemed! Lifetime Pulse Pro & 2 Group Boosts unlocked!');
+          updateProUI();
+        });
+      } else if (code.startsWith('PASS-')) {
+        setState({ pulse_trial_start: Date.now() }, () => {
+          alert('🎟️ 3-Day Friend Pass Activated! Pulse Pro & 2 Group Boosts unlocked for 72 hours.');
           updateProUI();
         });
       } else {
-        alert('Invalid Gift Card Code. Please check the code and try again.');
+        alert('Invalid Gift Card or Pass Code. Please check the code and try again.');
       }
     };
   }
@@ -1388,6 +1820,7 @@ function bindUIEvents() {
   bindVal('setUsername', 'username');
   bindVal('setCustomActivity', 'customActivity');
   bindVal('setAvatarEmoji', 'avatarEmoji');
+  bindVal('setEquippedTag', 'equippedTag');
   bindVal('setPronouns', 'pronouns');
   bindVal('setBio', 'bio');
   bindVal('setCustomTyping', 'customTyping');
@@ -1510,7 +1943,7 @@ function setActiveRail(btn, title, actionText, actionFn) {
   const actBtn = document.getElementById('sidebarActionBtn');
   if (actionText) { actBtn.style.display = 'inline-block'; actBtn.textContent = actionText; actBtn.onclick = actionFn; }
   else actBtn.style.display = 'none';
-  scheduleRefresh();
+  scheduleRefresh(true);
 }
 
 function addFriendByCode(code, name) {
@@ -1520,7 +1953,7 @@ function addFriendByCode(code, name) {
     const blocked = (res.pulse_blocked || []).filter(b => b !== cleanCode);
     if (!friends.some(f => f.code === cleanCode)) {
       friends.push({ code: cleanCode, name });
-      setState({ pulse_friends: friends, pulse_blocked: blocked }, () => { connectToCode(cleanCode); scheduleRefresh(); });
+      setState({ pulse_friends: friends, pulse_blocked: blocked }, () => { connectToCode(cleanCode); scheduleRefresh(true); });
     }
   });
 }
@@ -1535,19 +1968,22 @@ function promptAddFriend() {
 
 function promptCreateGroup() {
   getState(['pulse_groups'], (res) => {
-    const groupName = prompt('Enter New Group Name:');
+    const groupName = prompt('Enter New Group Server Name:');
     if (!groupName) return;
     const newGroup = {
       id: 'grp-' + Date.now(),
       name: groupName.trim(),
       members: [myCode],
-      admin: myCode
+      admin: myCode,
+      boosts: 0,
+      roles: [{ name: 'Admin', color: '#f59e0b' }],
+      auditLog: [{ time: Date.now(), actor: myCode, text: 'created the server' }]
     };
     const groups = res.pulse_groups || [];
     groups.push(newGroup);
     activeTarget = { type: 'group', id: newGroup.id, name: newGroup.name, members: newGroup.members, admin: myCode };
     setState({ pulse_groups: groups }, () => {
-      scheduleRefresh();
+      scheduleRefresh(true);
       openGroupMemberAdder();
     });
   });
