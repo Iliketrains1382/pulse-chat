@@ -348,7 +348,9 @@ document.addEventListener('DOMContentLoaded', () => {
   populateMicrophones();
   scheduleRefresh();
 
-  setInterval(connectToAllFriends, 25000);
+  // Fast P2P reconnect & 2-second outbox flush
+  setInterval(connectToAllFriends, 8000);
+  setInterval(flushOfflineQueue, 2000);
 
   syncChannel.onmessage = () => {
     loadSettingsAndTheme();
@@ -499,13 +501,26 @@ function initPeerNetwork() {
 
     const peerId = IS_POPUP ? `pulse-pop-${myCode}` : `pulse-ws-${myCode}`;
     if (peer) { try { peer.destroy(); } catch (e) {} }
-    peer = new Peer(peerId);
+
+    // Fast ICE/STUN Configuration
+    peer = new Peer(peerId, {
+      debug: 0,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' }
+        ],
+        iceCandidatePoolSize: 4
+      }
+    });
 
     peer.on('open', () => {
       if (document.getElementById('meshStatusText')) {
         document.getElementById('meshStatusText').textContent = `🟢 Connected (${isStreamer ? 'Streamer Mode' : myCode})`;
       }
       connectToAllFriends();
+      flushOfflineQueue();
     });
     peer.on('connection', (conn) => handleIncomingConnection(conn));
     peer.on('error', (err) => {
@@ -558,11 +573,12 @@ function connectToAllFriends() {
 
 function connectToCode(targetCode) {
   if (!peer || !peer.open || !targetCode || targetCode === myCode) return;
-  ['pulse-ws-', 'pulse-pop-', 'pulse-bg-'].forEach(prefix => {
+  ['pulse-ws-', 'pulse-bg-'].forEach(prefix => {
     const fullId = prefix + targetCode;
-    if (!liveConns[fullId] || !liveConns[fullId].open) {
+    const existing = liveConns[fullId];
+    if (!existing || (!existing.open && existing.peerConnection?.iceConnectionState !== 'checking')) {
       try {
-        const conn = peer.connect(fullId);
+        const conn = peer.connect(fullId, { reliable: true });
         if (conn) handleIncomingConnection(conn);
       } catch (e) {}
     }
@@ -697,19 +713,21 @@ function deliverPendingInbox() {
 
 function sendPayloadToCode(targetCode, payload) {
   const wsConn = liveConns[`pulse-ws-${targetCode}`];
-  const popConn = liveConns[`pulse-pop-${targetCode}`];
   const bgConn = liveConns[`pulse-bg-${targetCode}`];
+  const popConn = liveConns[`pulse-pop-${targetCode}`];
   let sent = false;
 
   if (wsConn && wsConn.open) { wsConn.send(payload); sent = true; }
-  else if (popConn && popConn.open) { popConn.send(payload); sent = true; }
   else if (bgConn && bgConn.open) { bgConn.send(payload); sent = true; }
+  else if (popConn && popConn.open) { popConn.send(payload); sent = true; }
 
   if (!sent && payload.type !== 'TYPING') {
     getState(['pulse_outbox'], (res) => {
       const outbox = res.pulse_outbox || [];
-      outbox.push({ targetCode, payload });
-      setState({ pulse_outbox: outbox });
+      if (!outbox.some(item => item.payload?.msgId === payload.msgId)) {
+        outbox.push({ targetCode, payload });
+        setState({ pulse_outbox: outbox });
+      }
     });
     connectToCode(targetCode);
   }
@@ -818,6 +836,7 @@ function openGroupMemberAdder() {
     if (!currentGroup) return;
 
     const list = document.getElementById('groupFriendPickerList');
+    if (!list) return;
     list.innerHTML = '';
 
     if (friends.length === 0) {
@@ -850,7 +869,8 @@ function openGroupMemberAdder() {
       });
     }
 
-    document.getElementById('groupMemberModal').style.display = 'flex';
+    const modal = document.getElementById('groupMemberModal');
+    if (modal) modal.style.display = 'flex';
   });
 }
 
@@ -936,23 +956,25 @@ function renderList(containerId, items, type, settings) {
 
   items.forEach(item => {
     const id = type === 'dm' ? item.code : item.id;
-    const isOnline = type === 'dm' && (liveConns[`pulse-ws-${id}`]?.open || liveConns[`pulse-pop-${id}`]?.open);
+    const isOnline = type === 'dm' && (liveConns[`pulse-ws-${id}`]?.open || liveConns[`pulse-pop-${id}`]?.open || liveConns[`pulse-bg-${id}`]?.open);
     const el = document.createElement('div');
     el.className = `list-card ${activeTarget && activeTarget.id === id ? 'active' : ''}`;
     const displayId = settings.streamerMode ? '••••' : id;
+
     el.innerHTML = `
       <div style="flex:1; overflow:hidden;">
         <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${type === 'group' ? (item.icon || '#') + ' ' : ''}${item.name}</div>
         <div style="font-size:0.68rem; color:var(--muted);">${type === 'dm' ? displayId : `${(item.members || []).length} members`}</div>
       </div>
-      <div style="display:flex; align-items:center; gap:5px;">
+      <div style="display:flex; align-items:center; gap:6px;">
         ${type === 'dm' ? `<span style="color:${isOnline ? '#10b981' : '#64748b'}; font-size:0.75rem;">●</span>` : ''}
-        ${type === 'dm' ? `<button class="btn-sec" data-remove-friend="${id}" title="Remove Friend" style="color:#ef4444; border:none; padding:2px 6px;">✕</button>` : ''}
+        ${type === 'dm' ? `<button data-remove-friend="${id}" title="Remove Friend" style="background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.35); border-radius:6px; padding:2px 7px; font-size:0.75rem; font-weight:800; cursor:pointer;">✕</button>` : ''}
       </div>
     `;
     el.onclick = (e) => {
       if (e.target.closest('[data-remove-friend]')) return;
       activeTarget = { type, id, name: item.name, members: item.members, admin: item.admin, icon: item.icon };
+      if (type === 'dm') connectToCode(id);
       if (IS_POPUP && document.getElementById('tabChat')) {
         document.getElementById('tabChat').click();
       }
@@ -1096,7 +1118,7 @@ function renderActiveChat(history, settings) {
 
 // --- Sending Messages + Restricted Phrases + TTS + Easter Eggs ---
 function handleSendMessage(customInputId) {
-  const input = document.getElementById(customInputId || 'msgInput') || document.getElementById('popupMsgInput');
+  const input = document.getElementById(customInputId || 'msgInput') || document.getElementById('popupMsgInput') || document.querySelector('textarea, input[type="text"]');
   let text = input ? input.value.trim() : '';
   if (!text) return;
 
@@ -1237,19 +1259,38 @@ function updateSetting(key, val) {
 }
 
 function bindUIEvents() {
-  // Always wire up the Full ↗ Workspace button anywhere it appears
   document.getElementById('openWorkspaceBtn')?.addEventListener('click', openWorkspaceTab);
+  document.getElementById('copyCodeBtn')?.addEventListener('click', () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); });
+  document.getElementById('archiveBtn')?.addEventListener('click', () => archiveOldHistory(true));
+  document.getElementById('sendBtn')?.addEventListener('click', () => handleSendMessage('msgInput'));
+  document.getElementById('popupSendBtn')?.addEventListener('click', () => handleSendMessage('popupMsgInput'));
 
-  // Popup-specific controls (if running inside popup.html)
+  // Smart fallback binder for popup buttons matched by visible label
+  document.querySelectorAll('button').forEach(btn => {
+    const label = btn.textContent.trim();
+    if (label === '+ Add' && !btn.onclick) btn.addEventListener('click', promptAddFriend);
+    if (label === '+ Group' && !btn.onclick) btn.addEventListener('click', promptCreateGroup);
+    if (label === 'Copy' && !btn.onclick) btn.addEventListener('click', () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); });
+    if (label === '☁️' && !btn.onclick) btn.addEventListener('click', () => archiveOldHistory(true));
+    if (label === 'Send' && !btn.onclick) btn.addEventListener('click', () => handleSendMessage());
+    if ((label.includes('Full') || label.includes('Workspace')) && !btn.onclick) btn.addEventListener('click', openWorkspaceTab);
+    if (label === '⚙️' && !btn.onclick) btn.addEventListener('click', () => {
+      const overlay = document.getElementById('settingsOverlay');
+      if (overlay) { overlay.style.display = 'flex'; updateProUI(); }
+      else openWorkspaceTab();
+    });
+  });
+
   if (IS_POPUP) {
     document.getElementById('addFriendBtn')?.addEventListener('click', promptAddFriend);
     document.getElementById('createGroupBtn')?.addEventListener('click', promptCreateGroup);
     document.getElementById('popupCallBtn')?.addEventListener('click', openWorkspaceTab);
-    document.getElementById('popupSendBtn')?.addEventListener('click', () => handleSendMessage('popupMsgInput'));
-    document.getElementById('popupMsgInput')?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage('popupMsgInput'); }
-    });
-    document.getElementById('copyCodeBtn')?.addEventListener('click', () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); });
+    const popInp = document.getElementById('popupMsgInput') || document.getElementById('msgInput');
+    if (popInp) {
+      popInp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(popInp.id); }
+      });
+    }
     return;
   }
 
@@ -1258,7 +1299,6 @@ function bindUIEvents() {
   if (document.getElementById('groupSettingsBtn')) document.getElementById('groupSettingsBtn').onclick = openGroupAdminModal;
   if (document.getElementById('closeGroupMemberModal')) document.getElementById('closeGroupMemberModal').onclick = () => { document.getElementById('groupMemberModal').style.display = 'none'; };
   if (document.getElementById('closeGroupAdminModal')) document.getElementById('closeGroupAdminModal').onclick = () => { document.getElementById('groupAdminModal').style.display = 'none'; };
-  if (document.getElementById('archiveBtn')) document.getElementById('archiveBtn').onclick = () => archiveOldHistory(true);
   if (document.getElementById('runArchiveNowBtn')) document.getElementById('runArchiveNowBtn').onclick = () => archiveOldHistory(true);
 
   if (document.getElementById('saveAllGroupSettingsBtn')) {
@@ -1283,12 +1323,12 @@ function bindUIEvents() {
     };
   }
 
-  document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
-  document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP CHANNELS', '+ Group', promptCreateGroup);
-  document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
-  document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
-  document.getElementById('closeSettingsBtn').onclick = () => { document.getElementById('settingsOverlay').style.display = 'none'; };
-  document.getElementById('sidebarActionBtn').onclick = promptAddFriend;
+  if (document.getElementById('railFriends')) document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
+  if (document.getElementById('railGroups')) document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP CHANNELS', '+ Group', promptCreateGroup);
+  if (document.getElementById('railRequests')) document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
+  if (document.getElementById('railSettings')) document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
+  if (document.getElementById('closeSettingsBtn')) document.getElementById('closeSettingsBtn').onclick = () => { document.getElementById('settingsOverlay').style.display = 'none'; };
+  if (document.getElementById('sidebarActionBtn')) document.getElementById('sidebarActionBtn').onclick = promptAddFriend;
 
   document.querySelectorAll('.settings-tab').forEach(tab => {
     tab.onclick = () => {
@@ -1299,45 +1339,48 @@ function bindUIEvents() {
     };
   });
 
-  // Pro & Gift Inventory
-  document.getElementById('redeemCodeBtn').onclick = () => {
-    const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
-    if (VALID_GIFT_CODES.includes(code)) {
-      setState({ pulse_pro_permanent: true }, () => {
-        alert('🎉 Gift Card Redeemed! Pulse Pro is now permanently unlocked!');
-        updateProUI();
+  if (document.getElementById('redeemCodeBtn')) {
+    document.getElementById('redeemCodeBtn').onclick = () => {
+      const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
+      if (VALID_GIFT_CODES.includes(code)) {
+        setState({ pulse_pro_permanent: true }, () => {
+          alert('🎉 Gift Card Redeemed! Pulse Pro is now permanently unlocked!');
+          updateProUI();
+        });
+      } else {
+        alert('Invalid Gift Card Code. Please check the code and try again.');
+      }
+    };
+  }
+
+  if (document.getElementById('genFriendPassBtn')) {
+    document.getElementById('genFriendPassBtn').onclick = () => {
+      const pass = 'PASS-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+      navigator.clipboard.writeText(pass);
+      alert(`🎟️ Generated & Copied 3-Day Friend Pass: ${pass}`);
+    };
+  }
+
+  if (document.getElementById('exportDataPackageBtn')) {
+    document.getElementById('exportDataPackageBtn').onclick = () => {
+      getState(['pulse_settings', 'pulse_friends', 'pulse_groups', 'pulse_history'], (res) => {
+        const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `pulse-chat-data-package-${Date.now()}.json`;
+        a.click();
       });
-    } else {
-      alert('Invalid Gift Card Code. Please check the code and try again.');
-    }
-  };
+    };
+  }
 
-  document.getElementById('genFriendPassBtn').onclick = () => {
-    const pass = 'PASS-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-    navigator.clipboard.writeText(pass);
-    alert(`🎟️ Generated & Copied 3-Day Friend Pass: ${pass}`);
-  };
-
-  // Data Package Export
-  document.getElementById('exportDataPackageBtn').onclick = () => {
-    getState(['pulse_settings', 'pulse_friends', 'pulse_groups', 'pulse_history'], (res) => {
-      const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `pulse-chat-data-package-${Date.now()}.json`;
-      a.click();
-    });
-  };
-
-  // HypeSquad House Selection
   document.querySelectorAll('[data-hype]').forEach(btn => {
     btn.onclick = () => updateSetting('hypeSquad', btn.dataset.hype);
   });
 
-  // TTS Preview
-  document.getElementById('previewTtsBtn').onclick = () => speakText('Pulse Chat Text to Speech is active and ready!');
+  if (document.getElementById('previewTtsBtn')) {
+    document.getElementById('previewTtsBtn').onclick = () => speakText('Pulse Chat Text to Speech is active and ready!');
+  }
 
-  // Bind All Inputs
   const bindVal = (id, key) => { const el = document.getElementById(id); if (el) el.onchange = (e) => updateSetting(key, e.target.value); };
   const bindChk = (id, key) => { const el = document.getElementById(id); if (el) el.onchange = (e) => updateSetting(key, e.target.checked); };
 
@@ -1372,72 +1415,84 @@ function bindUIEvents() {
   bindChk('setNoise', 'noise');
   bindChk('setAgc', 'agc');
 
-  document.getElementById('applyRecoverCodeBtn').onclick = () => {
-    const c = document.getElementById('recoverCodeInput').value.trim().toUpperCase();
-    if (c.length === 4) setState({ pulse_my_code: c }, () => { initPeerNetwork(); alert('Code restored!'); });
-  };
+  if (document.getElementById('applyRecoverCodeBtn')) {
+    document.getElementById('applyRecoverCodeBtn').onclick = () => {
+      const c = document.getElementById('recoverCodeInput').value.trim().toUpperCase();
+      if (c.length === 4) setState({ pulse_my_code: c }, () => { initPeerNetwork(); alert('Code restored!'); });
+    };
+  }
 
-  document.getElementById('logoutSessionBtn').onclick = () => {
-    if (confirm('Clear local session and reload?')) {
-      localStorage.clear();
-      window.location.reload();
-    }
-  };
+  if (document.getElementById('logoutSessionBtn')) {
+    document.getElementById('logoutSessionBtn').onclick = () => {
+      if (confirm('Clear local session and reload?')) {
+        localStorage.clear();
+        window.location.reload();
+      }
+    };
+  }
 
-  document.getElementById('testMicBtn').onclick = () => {
-    const status = document.getElementById('micTestStatus');
-    status.textContent = 'Requesting microphone access...';
-    getMediaStreamWithFallback((stream) => {
-      status.textContent = '✅ Microphone working! Audio stream active.';
-      status.style.color = '#10b981';
-      stream.getTracks().forEach(t => t.stop());
-    });
-  };
+  if (document.getElementById('testMicBtn')) {
+    document.getElementById('testMicBtn').onclick = () => {
+      const status = document.getElementById('micTestStatus');
+      status.textContent = 'Requesting microphone access...';
+      getMediaStreamWithFallback((stream) => {
+        status.textContent = '✅ Microphone working! Audio stream active.';
+        status.style.color = '#10b981';
+        stream.getTracks().forEach(t => t.stop());
+      });
+    };
+  }
 
-  document.getElementById('wsCallBtn').onclick = () => {
-    if (!activeTarget || activeTarget.type !== 'dm') return;
-    playSound(callingAudio);
-    getMediaStreamWithFallback((stream) => {
-      localStream = stream;
-      document.getElementById('localVideo').srcObject = stream;
-      document.getElementById('mediaArea').style.display = 'flex';
-      const call = peer.call(`pulse-ws-${activeTarget.id}`, stream);
-      currentCall = call;
-      call.on('stream', (rem) => { stopCallAudio(); document.getElementById('remoteVideo').srcObject = rem; });
-      call.on('close', endActiveCall);
-    });
-  };
+  if (document.getElementById('wsCallBtn')) {
+    document.getElementById('wsCallBtn').onclick = () => {
+      if (!activeTarget || activeTarget.type !== 'dm') return;
+      playSound(callingAudio);
+      getMediaStreamWithFallback((stream) => {
+        localStream = stream;
+        document.getElementById('localVideo').srcObject = stream;
+        document.getElementById('mediaArea').style.display = 'flex';
+        const call = peer.call(`pulse-ws-${activeTarget.id}`, stream);
+        currentCall = call;
+        call.on('stream', (rem) => { stopCallAudio(); document.getElementById('remoteVideo').srcObject = rem; });
+        call.on('close', endActiveCall);
+      });
+    };
+  }
 
-  document.getElementById('acceptCallBtn').onclick = () => {
-    stopCallAudio();
-    document.getElementById('callModal').style.display = 'none';
-    if (!currentCall) return;
-    getMediaStreamWithFallback((stream) => {
-      localStream = stream;
-      document.getElementById('localVideo').srcObject = stream;
-      document.getElementById('mediaArea').style.display = 'flex';
-      currentCall.answer(stream);
-      currentCall.on('stream', (rem) => { document.getElementById('remoteVideo').srcObject = rem; });
-      currentCall.on('close', endActiveCall);
-    });
-  };
+  if (document.getElementById('acceptCallBtn')) {
+    document.getElementById('acceptCallBtn').onclick = () => {
+      stopCallAudio();
+      document.getElementById('callModal').style.display = 'none';
+      if (!currentCall) return;
+      getMediaStreamWithFallback((stream) => {
+        localStream = stream;
+        document.getElementById('localVideo').srcObject = stream;
+        document.getElementById('mediaArea').style.display = 'flex';
+        currentCall.answer(stream);
+        currentCall.on('stream', (rem) => { document.getElementById('remoteVideo').srcObject = rem; });
+        currentCall.on('close', endActiveCall);
+      });
+    };
+  }
 
-  document.getElementById('declineCallBtn').onclick = () => { stopCallAudio(); document.getElementById('callModal').style.display = 'none'; if (currentCall) currentCall.close(); };
-  document.getElementById('endCallBtn').onclick = endActiveCall;
-  document.getElementById('shareScreenBtn').onclick = toggleScreenShare;
+  if (document.getElementById('declineCallBtn')) document.getElementById('declineCallBtn').onclick = () => { stopCallAudio(); document.getElementById('callModal').style.display = 'none'; if (currentCall) currentCall.close(); };
+  if (document.getElementById('endCallBtn')) document.getElementById('endCallBtn').onclick = endActiveCall;
+  if (document.getElementById('shareScreenBtn')) document.getElementById('shareScreenBtn').onclick = toggleScreenShare;
 
-  document.getElementById('muteMicBtn').onclick = (e) => {
-    isMuted = !isMuted;
-    if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-    e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
-  };
+  if (document.getElementById('muteMicBtn')) {
+    document.getElementById('muteMicBtn').onclick = (e) => {
+      isMuted = !isMuted;
+      if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+      e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
+    };
+  }
 
-  document.getElementById('copyCodeBtn').onclick = () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); };
-  document.getElementById('quickJoinBtn').onclick = promptAddFriend;
-  document.getElementById('sendBtn').onclick = () => handleSendMessage();
-  document.getElementById('msgInput').onkeydown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); }
-  };
+  if (document.getElementById('quickJoinBtn')) document.getElementById('quickJoinBtn').onclick = promptAddFriend;
+  if (document.getElementById('msgInput')) {
+    document.getElementById('msgInput').onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); }
+    };
+  }
 }
 
 function endActiveCall() {
