@@ -4,7 +4,6 @@ const URL_PARAMS = new URLSearchParams(window.location.search);
 const EXT_ID = URL_PARAMS.get('extId') || localStorage.getItem('pulse_ext_id') || '';
 if (URL_PARAMS.get('extId')) localStorage.setItem('pulse_ext_id', URL_PARAMS.get('extId'));
 
-// Cross-tab instant sync channel (keeps Popup & Workspace 100% synced in real-time)
 const syncChannel = new BroadcastChannel('pulse_chat_v10_sync');
 
 let peer = null;
@@ -18,7 +17,6 @@ let isMuted = false;
 let renderTimer = null;
 let logoClickCount = 0;
 
-// Valid Gift Card Codes for Pulse Pro
 const VALID_GIFT_CODES = [
   'PULSE-PRO-9X4K-2026',
   'PULSE-VIP-7M2P-8841',
@@ -27,9 +25,7 @@ const VALID_GIFT_CODES = [
   'PULSE-ULTRA-1Q6Z-9075'
 ];
 
-// Restricted Phrases -> Opens dedicated warning.html
 const BANNED_PHRASES = ['67', '6-7', '6 7'];
-
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 let screenShareTimer = null;
 let screenStream = null;
@@ -48,11 +44,8 @@ function getState(keys, cb) {
   } else if (IS_WEB_HOSTED && EXT_ID && chrome?.runtime?.sendMessage) {
     try {
       chrome.runtime.sendMessage(EXT_ID, { type: 'STORAGE_GET', keys }, (res) => {
-        if (chrome.runtime.lastError || !res) {
-          cb(getLocalFallback(keys));
-        } else {
-          cb(res);
-        }
+        if (chrome.runtime.lastError || !res) cb(getLocalFallback(keys));
+        else cb(res);
       });
     } catch (e) {
       cb(getLocalFallback(keys));
@@ -71,7 +64,6 @@ function getLocalFallback(keys) {
 }
 
 function setState(obj, cb) {
-  // Always mirror to localStorage + BroadcastChannel for instant zero-lag sync
   Object.keys(obj).forEach(k => {
     try { localStorage.setItem(k, JSON.stringify(obj[k])); } catch (e) {}
   });
@@ -90,7 +82,6 @@ function setState(obj, cb) {
   }
 }
 
-// --- Cloud Sync & Local History Archiver ---
 function archiveOldHistory(manual = false) {
   getState(['pulse_history', 'pulse_archive'], (res) => {
     const history = res.pulse_history || {};
@@ -112,7 +103,6 @@ function archiveOldHistory(manual = false) {
   });
 }
 
-// --- Friend Removal & Block Manager ---
 function removeFriendAndRecords(targetCode, alsoBlock = false) {
   const code = targetCode.trim().toUpperCase();
   getState(['pulse_friends', 'pulse_history', 'pulse_requests', 'pulse_outbox', 'pulse_pending_inbox', 'pulse_blocked'], (res) => {
@@ -196,7 +186,6 @@ function updateProUI() {
   });
 }
 
-// --- Custom Soundboard Uploader (3 Standard / 5 Pro) ---
 function renderSoundboardSettings(hasPro) {
   const container = document.getElementById('soundboardSlotsContainer');
   if (!container) return;
@@ -296,9 +285,20 @@ function renderCallSoundboard(hasPro) {
   });
 }
 
+// --- Text-to-Speech Helper ---
+function speakText(text) {
+  if (!('speechSynthesis' in window)) return;
+  getState(['pulse_settings'], (res) => {
+    const s = res.pulse_settings || {};
+    if (s.allowTts === false) return;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = parseFloat(s.ttsRate || '1.0');
+    window.speechSynthesis.speak(utter);
+  });
+}
+
 // --- Easter Eggs Engine ---
 function initEasterEggs() {
-  // 1. Konami Code -> Matrix Hacker Mode
   const konami = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
   let konamiIdx = 0;
   document.addEventListener('keydown', (e) => {
@@ -314,26 +314,24 @@ function initEasterEggs() {
     }
   });
 
-  // 2. Click Brand Logo 7 Times -> Secret Developer Mode
   const brand = document.getElementById('brandLogo');
   if (brand) {
     brand.onclick = () => {
       logoClickCount++;
       if (logoClickCount === 7) {
         logoClickCount = 0;
-        alert('🎉 SECRET FOUND! You discovered the Pulse v10.0 Developer Easter Egg! Try typing /party, /flip, or /matrix in any chat!');
+        alert('🎉 SECRET FOUND! You discovered the Pulse v10.1 Developer Easter Egg! Try /party, /flip, /matrix, or /tts in chat!');
       }
     };
   }
 
-  // 3. Midnight Owl Banner (12 AM - 3 AM)
   const hr = new Date().getHours();
   if (hr >= 0 && hr <= 3 && document.getElementById('owlBanner')) {
     document.getElementById('owlBanner').textContent = '🦉 Night Owl Mode Active';
   }
 }
 
-// --- Initialization & Instant Cross-Tab Sync ---
+// --- Initialization & Cross-Tab Sync ---
 function scheduleRefresh() {
   if (renderTimer) cancelAnimationFrame(renderTimer);
   renderTimer = requestAnimationFrame(() => refreshAllViews());
@@ -352,7 +350,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setInterval(connectToAllFriends, 25000);
 
-  // Instant sync between Popup and Workspace
   syncChannel.onmessage = () => {
     loadSettingsAndTheme();
     updateProUI();
@@ -395,7 +392,6 @@ function stopCallAudio() {
   callingAudio.currentTime = 0;
 }
 
-// --- Screen Share Quota ---
 function getWeekStartTimestamp() {
   const now = new Date();
   const diff = now.getDate() - now.getDay();
@@ -456,7 +452,6 @@ function stopScreenShare() {
   }
 }
 
-// --- Microphone & Calling ---
 function populateMicrophones() {
   const sel = document.getElementById('micDeviceSelect');
   if (!sel || !navigator.mediaDevices) return;
@@ -490,25 +485,25 @@ function getMediaStreamWithFallback(cb) {
   });
 }
 
-// --- PeerJS Networking ---
 function initPeerNetwork() {
-  getState(['pulse_my_code'], (res) => {
+  getState(['pulse_my_code', 'pulse_settings'], (res) => {
     myCode = res.pulse_my_code;
     if (!myCode) {
       myCode = Math.random().toString(36).substring(2, 6).toUpperCase();
       setState({ pulse_my_code: myCode });
     }
-    if (document.getElementById('myCodeDisplay')) document.getElementById('myCodeDisplay').textContent = myCode;
+    const isStreamer = (res.pulse_settings || {}).streamerMode;
+    if (document.getElementById('myCodeDisplay')) {
+      document.getElementById('myCodeDisplay').textContent = isStreamer ? '****' : myCode;
+    }
 
     const peerId = IS_POPUP ? `pulse-pop-${myCode}` : `pulse-ws-${myCode}`;
-    if (peer) {
-      try { peer.destroy(); } catch (e) {}
-    }
+    if (peer) { try { peer.destroy(); } catch (e) {} }
     peer = new Peer(peerId);
 
     peer.on('open', () => {
       if (document.getElementById('meshStatusText')) {
-        document.getElementById('meshStatusText').textContent = `🟢 Connected (${myCode})`;
+        document.getElementById('meshStatusText').textContent = `🟢 Connected (${isStreamer ? 'Streamer Mode' : myCode})`;
       }
       connectToAllFriends();
     });
@@ -584,7 +579,7 @@ function handleIncomingConnection(conn) {
 
       if (payload.type === 'TYPING') {
         if (activeTarget && activeTarget.id === senderCode && document.getElementById('typingIndicator')) {
-          document.getElementById('typingIndicator').textContent = `${senderCode} is typing...`;
+          document.getElementById('typingIndicator').textContent = `${senderCode} ${payload.customText || 'is typing...'}`;
           clearTimeout(typingTimeout);
           typingTimeout = setTimeout(() => { document.getElementById('typingIndicator').textContent = ''; }, 2500);
         }
@@ -608,7 +603,6 @@ function handleIncomingConnection(conn) {
       }
 
       if (payload.type === 'GROUP_MSG') {
-        // Ensure receiver also has the group in their list
         getState(['pulse_groups'], (gRes) => {
           const groups = gRes.pulse_groups || [];
           if (!groups.some(g => g.id === payload.groupId)) {
@@ -644,6 +638,7 @@ function handleIncomingConnection(conn) {
               time: Date.now(),
               self: false
             });
+            if (payload.tts) speakText(`${senderCode} says ${payload.text}`);
             if (conn.open) conn.send({ type: 'READ_ACK', msgId: payload.msgId });
             notifyIfNotViewing(senderCode, senderCode, payload.text, payload.msgId);
           }
@@ -835,11 +830,8 @@ function openGroupMemberAdder() {
             currentGroup.members.push(f.code);
             activeTarget.members = currentGroup.members;
             setState({ pulse_groups: groups }, () => {
-              // Sync updated group membership to all members automatically
               currentGroup.members.forEach(mc => {
-                if (mc !== myCode) {
-                  sendPayloadToCode(mc, { type: 'GROUP_INVITE_SYNC', group: currentGroup });
-                }
+                if (mc !== myCode) sendPayloadToCode(mc, { type: 'GROUP_INVITE_SYNC', group: currentGroup });
               });
               openGroupMemberAdder();
               scheduleRefresh();
@@ -854,13 +846,51 @@ function openGroupMemberAdder() {
   });
 }
 
+// --- Group / Server Admin Settings Modal ---
+function openGroupAdminModal() {
+  if (!activeTarget || activeTarget.type !== 'group') return;
+  getState(['pulse_groups'], (res) => {
+    const groups = res.pulse_groups || [];
+    const grp = groups.find(g => g.id === activeTarget.id);
+    if (!grp) return;
+
+    document.getElementById('grpEditName').value = grp.name;
+    document.getElementById('grpEditIcon').value = grp.icon || '#';
+    document.getElementById('grpEditBanner').value = grp.bannerColor || '#5865f2';
+    document.getElementById('grpRoleColor').value = grp.roleColor || '#10b981';
+    document.getElementById('grpAutoModWords').value = (grp.autoModWords || []).join(', ');
+
+    const memberList = document.getElementById('grpMemberManageList');
+    memberList.innerHTML = '';
+    (grp.members || []).forEach(mc => {
+      const mRow = document.createElement('div');
+      mRow.className = 'setting-row';
+      mRow.innerHTML = `
+        <span><strong>${mc}</strong> ${mc === grp.admin ? '<span class="pro-badge">ADMIN</span>' : ''}</span>
+        ${mc !== myCode ? `<button class="btn-danger" data-kick-member="${mc}" style="padding:4px 8px; font-size:0.75rem;">Kick</button>` : '<span style="font-size:0.75rem; color:var(--muted);">You</span>'}
+      `;
+      const kickBtn = mRow.querySelector('[data-kick-member]');
+      if (kickBtn) {
+        kickBtn.onclick = () => {
+          grp.members = grp.members.filter(m => m !== mc);
+          setState({ pulse_groups: groups }, () => { openGroupAdminModal(); scheduleRefresh(); });
+        };
+      }
+      memberList.appendChild(mRow);
+    });
+
+    document.getElementById('groupAdminModal').style.display = 'flex';
+  });
+}
+
 // --- Rendering Views ---
 function refreshAllViews() {
-  getState(['pulse_friends', 'pulse_groups', 'pulse_requests', 'pulse_history'], (res) => {
+  getState(['pulse_friends', 'pulse_groups', 'pulse_requests', 'pulse_history', 'pulse_settings'], (res) => {
     const friends = res.pulse_friends || [];
     const groups = res.pulse_groups || [];
     const requests = res.pulse_requests || [];
     const history = res.pulse_history || {};
+    const settings = res.pulse_settings || {};
 
     const badge = document.getElementById('reqBadge');
     if (badge) {
@@ -868,29 +898,17 @@ function refreshAllViews() {
       badge.style.display = requests.length > 0 ? 'inline-block' : 'none';
     }
 
-    if (IS_POPUP) {
-      renderList('friendsList', friends, 'dm');
-      renderList('groupsList', groups, 'group');
-      const reqHeader = document.getElementById('reqSectionHeader');
-      const reqList = document.getElementById('requestsList');
-      if (reqHeader && reqList) {
-        reqHeader.style.display = requests.length > 0 ? 'flex' : 'none';
-        reqList.style.display = requests.length > 0 ? 'flex' : 'none';
-        renderRequestsList('requestsList', requests);
-      }
-    } else {
-      const mode = document.getElementById('railGroups').classList.contains('active') ? 'group' :
-                   document.getElementById('railRequests').classList.contains('active') ? 'req' : 'dm';
-      if (mode === 'req') renderRequestsList('sidebarList', requests);
-      else if (mode === 'group') renderList('sidebarList', groups, 'group');
-      else renderList('sidebarList', friends, 'dm');
-    }
+    const mode = document.getElementById('railGroups').classList.contains('active') ? 'group' :
+                 document.getElementById('railRequests').classList.contains('active') ? 'req' : 'dm';
+    if (mode === 'req') renderRequestsList('sidebarList', requests);
+    else if (mode === 'group') renderList('sidebarList', groups, 'group', settings);
+    else renderList('sidebarList', friends, 'dm', settings);
 
-    renderActiveChat(history);
+    renderActiveChat(history, settings);
   });
 }
 
-function renderList(containerId, items, type) {
+function renderList(containerId, items, type, settings) {
   const container = document.getElementById(containerId);
   if (!container) return;
   container.innerHTML = '';
@@ -905,26 +923,27 @@ function renderList(containerId, items, type) {
     const isOnline = type === 'dm' && (liveConns[`pulse-ws-${id}`]?.open || liveConns[`pulse-pop-${id}`]?.open);
     const el = document.createElement('div');
     el.className = `list-card ${activeTarget && activeTarget.id === id ? 'active' : ''}`;
+    const displayId = settings.streamerMode ? '••••' : id;
     el.innerHTML = `
       <div style="flex:1; overflow:hidden;">
-        <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${type === 'group' ? '# ' : ''}${item.name}</div>
-        <div style="font-size:0.68rem; color:var(--muted);">${type === 'dm' ? id : `${(item.members || []).length} members`}</div>
+        <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${type === 'group' ? (item.icon || '#') + ' ' : ''}${item.name}</div>
+        <div style="font-size:0.68rem; color:var(--muted);">${type === 'dm' ? displayId : `${(item.members || []).length} members`}</div>
       </div>
       <div style="display:flex; align-items:center; gap:5px;">
         ${type === 'dm' ? `<span style="color:${isOnline ? '#10b981' : '#64748b'}; font-size:0.75rem;">●</span>` : ''}
-        ${type === 'dm' ? `<button class="mini-btn" data-remove-friend="${id}" title="Remove Friend" style="color:#ef4444; border:none;">✕</button>` : ''}
+        ${type === 'dm' ? `<button class="btn-sec" data-remove-friend="${id}" title="Remove Friend" style="color:#ef4444; border:none; padding:2px 6px;">✕</button>` : ''}
       </div>
     `;
     el.onclick = (e) => {
       if (e.target.closest('[data-remove-friend]')) return;
-      activeTarget = { type, id, name: item.name, members: item.members, admin: item.admin };
+      activeTarget = { type, id, name: item.name, members: item.members, admin: item.admin, icon: item.icon };
       scheduleRefresh();
     };
     const remBtn = el.querySelector('[data-remove-friend]');
     if (remBtn) {
       remBtn.onclick = (e) => {
         e.stopPropagation();
-        if (confirm(`Remove ${item.name} (${id}) and delete all chat records?`)) {
+        if (confirm(`Remove ${item.name} and delete all chat records?`)) {
           removeFriendAndRecords(id, false);
         }
       };
@@ -976,77 +995,91 @@ function renderRequestsList(containerId, requests) {
   });
 }
 
-function renderActiveChat(history) {
+function formatMessageText(rawText, settings) {
+  let out = rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (settings.autoEmoji !== false) {
+    out = out.replace(/:\)/g, '😊').replace(/:\(/g, '😢').replace(/<3/g, '❤️').replace(/:D/g, '😄');
+  }
+  // Spoiler formatting ||text||
+  if (settings.spoilerMode !== 'always') {
+    out = out.replace(/\|\|(.+?)\|\|/g, '<span class="spoiler-box" onclick="this.classList.toggle(\'revealed\')">$1</span>');
+  } else {
+    out = out.replace(/\|\|(.+?)\|\|/g, '<span>$1</span>');
+  }
+  return out;
+}
+
+function renderActiveChat(history, settings) {
   const titleEl = document.getElementById('activeChatTitle');
   const box = document.getElementById('messagesBox');
-  const callBtn = document.getElementById('wsCallBtn') || document.getElementById('popupCallBtn');
+  const callBtn = document.getElementById('wsCallBtn');
   const addMemberBtn = document.getElementById('addGroupMemberBtn');
+  const grpSetBtn = document.getElementById('groupSettingsBtn');
 
   if (!activeTarget) {
     titleEl.textContent = 'Select a Friend or Group';
     if (callBtn) callBtn.style.display = 'none';
     if (addMemberBtn) addMemberBtn.style.display = 'none';
+    if (grpSetBtn) grpSetBtn.style.display = 'none';
     box.innerHTML = `
       <div class="empty-welcome">
         <div style="font-size:2rem;">⚡</div>
-        <strong>Welcome to Pulse Chat v10.0</strong>
-        <p style="font-size:0.82rem; color:var(--muted);">Select a friend or group on the left to start chatting, or click <b>+ Add</b> / <b>+ Group</b> to build your network.</p>
-        <div style="font-size:0.75rem; color:var(--accent);">Tip: Try typing <b>/party</b> or <b>/flip</b> in chat!</div>
+        <strong>Welcome to Pulse Chat v10.1</strong>
+        <p style="font-size:0.82rem; color:var(--muted);">Select a friend or group on the left, or open ⚙️ User Settings to customize your profile, accessibility, soundboard, and Pulse Pro perks.</p>
       </div>
     `;
     return;
   }
 
-  titleEl.textContent = `${activeTarget.type === 'group' ? '# ' : ''}${activeTarget.name}`;
+  titleEl.textContent = `${activeTarget.type === 'group' ? (activeTarget.icon || '#') + ' ' : ''}${activeTarget.name}`;
   if (callBtn) callBtn.style.display = activeTarget.type === 'dm' ? 'inline-block' : 'none';
   if (addMemberBtn) addMemberBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
+  if (grpSetBtn) grpSetBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
 
-  getState(['pulse_settings'], (res) => {
-    const s = res.pulse_settings || {};
-    const limit = parseInt(s.renderLimit || '150', 10);
-    const msgs = (history[activeTarget.id] || []).slice(-limit);
-    box.innerHTML = '';
+  const limit = parseInt(settings.renderLimit || '150', 10);
+  const msgs = (history[activeTarget.id] || []).slice(-limit);
+  box.innerHTML = '';
 
-    if (msgs.length === 0) {
-      box.innerHTML = `
-        <div class="empty-welcome">
-          <strong>Start of ${activeTarget.name}</strong>
-          <p style="font-size:0.8rem; color:var(--muted);">Messages are end-to-end peer synced across Popup & Workspace.</p>
-        </div>
-      `;
-      return;
+  if (msgs.length === 0) {
+    box.innerHTML = `
+      <div class="empty-welcome">
+        <strong>Start of ${activeTarget.name}</strong>
+        <p style="font-size:0.8rem; color:var(--muted);">End-to-end peer synced. Try <code>||spoiler||</code> or <code>/tts hello</code>!</p>
+      </div>
+    `;
+    return;
+  }
+
+  msgs.forEach(m => {
+    const div = document.createElement('div');
+    div.className = `message ${m.self ? 'sent' : 'received'}`;
+    const timeStr = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const statusHtml = (m.self && m.status) ? `<span>${m.status === 'Queued' ? '🕒' : m.status === 'Read' ? '✓✓' : '✓'}</span>` : '';
+    const senderLabel = (!m.self && activeTarget.type === 'group') ? `<div style="font-size:0.7rem; font-weight:800; color:var(--accent); margin-bottom:2px;">${m.sender}</div>` : '';
+    const devCopyBtn = settings.devMode ? `<button class="btn-sec" style="padding:1px 5px; font-size:0.65rem;" onclick="navigator.clipboard.writeText('${m.id}')">ID</button>` : '';
+
+    let reactHtml = '';
+    if (m.reactions && settings.showReactions !== false) {
+      reactHtml = `<div style="display:flex; gap:4px; margin-top:4px;">` + Object.entries(m.reactions).map(([em, cnt]) => `<span style="background:rgba(0,0,0,0.25); border-radius:10px; padding:1px 6px; font-size:0.7rem;">${em} ${cnt}</span>`).join('') + `</div>`;
     }
 
-    msgs.forEach(m => {
-      const div = document.createElement('div');
-      div.className = `message ${m.self ? 'sent' : 'received'}`;
-      const timeStr = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const statusHtml = (m.self && m.status) ? `<span>${m.status === 'Queued' ? '🕒' : m.status === 'Read' ? '✓✓' : '✓'}</span>` : '';
-      const senderLabel = (!m.self && activeTarget.type === 'group') ? `<div style="font-size:0.7rem; font-weight:800; color:var(--accent); margin-bottom:2px;">${m.sender}</div>` : '';
-
-      let reactHtml = '';
-      if (m.reactions) {
-        reactHtml = `<div class="react-bar">` + Object.entries(m.reactions).map(([em, cnt]) => `<span class="react-pill">${em} ${cnt}</span>`).join('') + `</div>`;
-      }
-
-      div.innerHTML = `${senderLabel}<div>${m.text || ''}</div>${reactHtml}<div class="msg-meta"><span>${timeStr}</span>${statusHtml}</div>`;
-      div.ondblclick = () => {
-        applyMessageReaction(activeTarget.id, m.id, '🔥');
-        if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'REACTION', chatId: myCode, msgId: m.id, emoji: '🔥' });
-      };
-      box.appendChild(div);
-    });
-    box.scrollTop = box.scrollHeight;
+    div.innerHTML = `${senderLabel}<div>${formatMessageText(m.text || '', settings)}</div>${reactHtml}<div class="msg-meta"><span>${timeStr}</span>${devCopyBtn}${statusHtml}</div>`;
+    div.ondblclick = () => {
+      if (settings.showReactions === false) return;
+      applyMessageReaction(activeTarget.id, m.id, '🔥');
+      if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'REACTION', chatId: myCode, msgId: m.id, emoji: '🔥' });
+    };
+    box.appendChild(div);
   });
+  box.scrollTop = box.scrollHeight;
 }
 
-// --- Sending Messages + Restricted Phrases + Easter Egg Commands ---
+// --- Sending Messages + Restricted Phrases + TTS + Easter Eggs ---
 function handleSendMessage() {
   const input = document.getElementById('msgInput');
-  const text = input ? input.value.trim() : '';
+  let text = input ? input.value.trim() : '';
   if (!text) return;
 
-  // Easter Egg Chat Commands
   if (text.toLowerCase() === '/flip') {
     document.body.classList.toggle('flip-mode');
     input.value = '';
@@ -1069,33 +1102,29 @@ function handleSendMessage() {
     return;
   }
 
-  if (!activeTarget) return;
+  let isTts = false;
+  if (text.toLowerCase().startsWith('/tts ')) {
+    isTts = true;
+    text = text.slice(5).trim();
+    speakText(text);
+  }
 
-  // Restricted Phrase Check -> Opens warning.html
+  if (!activeTarget || !text) return;
+
   const matchedBan = BANNED_PHRASES.find(phrase => text.includes(phrase));
   if (matchedBan) {
     input.value = '';
     const warnUrl = getAssetUrl(`warning.html?term=${encodeURIComponent(matchedBan)}`);
-    if (!IS_WEB_HOSTED && chrome?.tabs?.create) {
-      chrome.tabs.create({ url: warnUrl });
-    } else {
-      window.open(warnUrl, '_blank');
-    }
+    if (!IS_WEB_HOSTED && chrome?.tabs?.create) chrome.tabs.create({ url: warnUrl });
+    else window.open(warnUrl, '_blank');
     return;
   }
 
   const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
-  const msgObj = {
-    id: msgId,
-    sender: myCode,
-    text,
-    time: Date.now(),
-    self: true,
-    status: 'Sent'
-  };
+  const msgObj = { id: msgId, sender: myCode, text, time: Date.now(), self: true, status: 'Sent' };
 
   if (activeTarget.type === 'dm') {
-    const sent = sendPayloadToCode(activeTarget.id, { type: 'DM', msgId, text });
+    const sent = sendPayloadToCode(activeTarget.id, { type: 'DM', msgId, text, tts: isTts });
     msgObj.status = sent ? 'Sent' : 'Queued';
     saveMessageToHistory(activeTarget.id, msgObj);
   } else if (activeTarget.type === 'group') {
@@ -1122,13 +1151,58 @@ function handleSendMessage() {
 function loadSettingsAndTheme() {
   getState(['pulse_settings'], (res) => {
     const s = res.pulse_settings || {};
-    const theme = s.theme || 'discord-dark';
-    document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.setAttribute('data-theme', s.theme || 'discord-dark');
+    document.documentElement.style.setProperty('--ui-saturation', `${s.saturation || 100}%`);
     document.body.style.fontFamily = s.fontFamily || 'system-ui, sans-serif';
     document.body.style.setProperty('--font-size', s.fontSize || '15px');
+    document.body.style.setProperty('--msg-gap', s.msgGap || '10px');
+
     document.body.classList.toggle('no-animations', !!s.noAnimations);
+    document.body.classList.toggle('high-contrast', !!s.highContrast);
+    document.body.classList.toggle('compact-mode', s.msgDensity === 'compact');
+
     if (document.getElementById('footerDisplayName')) document.getElementById('footerDisplayName').textContent = s.displayName || 'User';
+    if (document.getElementById('footerAvatar')) document.getElementById('footerAvatar').textContent = s.avatarEmoji || '👤';
     if (document.getElementById('footerCustomActivity')) document.getElementById('footerCustomActivity').textContent = s.customActivity || 'Ready to chat';
+
+    const hypeBadge = document.getElementById('footerHypeBadge');
+    if (hypeBadge) {
+      hypeBadge.textContent = s.hypeSquad || '';
+      hypeBadge.style.display = s.hypeSquad ? 'inline-block' : 'none';
+    }
+
+    const sendBtn = document.getElementById('sendBtn');
+    if (sendBtn) sendBtn.style.display = s.showSendBtn === false ? 'none' : 'inline-block';
+
+    // Sync Settings Inputs
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.value = val; };
+    const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+
+    setVal('themeSelect', s.theme || 'discord-dark');
+    setVal('setDisplayName', s.displayName || '');
+    setVal('setUsername', s.username || '');
+    setVal('setCustomActivity', s.customActivity || '');
+    setVal('setAvatarEmoji', s.avatarEmoji || '😎');
+    setVal('setPronouns', s.pronouns || '');
+    setVal('setBio', s.bio || '');
+    setVal('setCustomTyping', s.customTyping || '');
+    setVal('setDmFilter', s.dmFilter || 'requests');
+    setVal('setMsgDensity', s.msgDensity || 'cozy');
+    setVal('setFontFamily', s.fontFamily || 'system-ui');
+    setVal('setFontSize', s.fontSize || '15px');
+    setVal('setMsgGap', s.msgGap || '10px');
+    setVal('setSaturation', s.saturation || 100);
+    setVal('setTtsRate', s.ttsRate || 1.0);
+    setVal('setSpoilerMode', s.spoilerMode || 'click');
+
+    setChk('setHighContrast', s.highContrast);
+    setChk('setNoAnimations', s.noAnimations);
+    setChk('setShowSendBtn', s.showSendBtn !== false);
+    setChk('setAllowTts', s.allowTts !== false);
+    setChk('setShowReactions', s.showReactions !== false);
+    setChk('setAutoEmoji', s.autoEmoji !== false);
+    setChk('setStreamerMode', s.streamerMode);
+    setChk('setDevMode', s.devMode);
   });
 }
 
@@ -1136,133 +1210,194 @@ function updateSetting(key, val) {
   getState(['pulse_settings'], (res) => {
     const s = res.pulse_settings || {};
     s[key] = val;
-    setState({ pulse_settings: s }, loadSettingsAndTheme);
+    setState({ pulse_settings: s }, () => {
+      loadSettingsAndTheme();
+      scheduleRefresh();
+    });
   });
 }
 
 function bindUIEvents() {
-  if (document.getElementById('addGroupMemberBtn')) {
-    document.getElementById('addGroupMemberBtn').onclick = openGroupMemberAdder;
-  }
-  if (document.getElementById('closeGroupMemberModal')) {
-    document.getElementById('closeGroupMemberModal').onclick = () => {
-      document.getElementById('groupMemberModal').style.display = 'none';
-    };
-  }
-  if (document.getElementById('archiveBtn')) {
-    document.getElementById('archiveBtn').onclick = () => archiveOldHistory(true);
-  }
-  if (document.getElementById('runArchiveNowBtn')) {
-    document.getElementById('runArchiveNowBtn').onclick = () => archiveOldHistory(true);
-  }
+  if (document.getElementById('addGroupMemberBtn')) document.getElementById('addGroupMemberBtn').onclick = openGroupMemberAdder;
+  if (document.getElementById('groupSettingsBtn')) document.getElementById('groupSettingsBtn').onclick = openGroupAdminModal;
+  if (document.getElementById('closeGroupMemberModal')) document.getElementById('closeGroupMemberModal').onclick = () => { document.getElementById('groupMemberModal').style.display = 'none'; };
+  if (document.getElementById('closeGroupAdminModal')) document.getElementById('closeGroupAdminModal').onclick = () => { document.getElementById('groupAdminModal').style.display = 'none'; };
+  if (document.getElementById('archiveBtn')) document.getElementById('archiveBtn').onclick = () => archiveOldHistory(true);
+  if (document.getElementById('runArchiveNowBtn')) document.getElementById('runArchiveNowBtn').onclick = () => archiveOldHistory(true);
 
-  if (IS_POPUP) {
-    document.getElementById('openWorkspaceBtn').onclick = openWorkspaceTab;
-    document.getElementById('addFriendBtn').onclick = promptAddFriend;
-    document.getElementById('createGroupBtn').onclick = promptCreateGroup;
-    document.getElementById('popupCallBtn').onclick = openWorkspaceTab;
-  } else {
-    document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
-    document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP CHANNELS', '+ Group', promptCreateGroup);
-    document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
-    document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
-    document.getElementById('closeSettingsBtn').onclick = () => { document.getElementById('settingsOverlay').style.display = 'none'; };
-    document.getElementById('sidebarActionBtn').onclick = promptAddFriend;
-
-    document.querySelectorAll('.settings-tab').forEach(tab => {
-      tab.onclick = () => {
-        document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById(`sec-${tab.dataset.sec}`).classList.add('active');
-      };
-    });
-
-    document.getElementById('redeemCodeBtn').onclick = () => {
-      const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
-      if (VALID_GIFT_CODES.includes(code)) {
-        setState({ pulse_pro_permanent: true }, () => {
-          alert('🎉 Gift Card Redeemed! Pulse Pro is now permanently unlocked!');
-          updateProUI();
+  if (document.getElementById('saveAllGroupSettingsBtn')) {
+    document.getElementById('saveAllGroupSettingsBtn').onclick = () => {
+      if (!activeTarget || activeTarget.type !== 'group') return;
+      getState(['pulse_groups'], (res) => {
+        const groups = res.pulse_groups || [];
+        const grp = groups.find(g => g.id === activeTarget.id);
+        if (!grp) return;
+        grp.name = document.getElementById('grpEditName').value.trim() || grp.name;
+        grp.icon = document.getElementById('grpEditIcon').value.trim() || '#';
+        grp.bannerColor = document.getElementById('grpEditBanner').value;
+        grp.roleColor = document.getElementById('grpRoleColor').value;
+        grp.autoModWords = document.getElementById('grpAutoModWords').value.split(',').map(w => w.trim()).filter(Boolean);
+        activeTarget.name = grp.name;
+        activeTarget.icon = grp.icon;
+        setState({ pulse_groups: groups }, () => {
+          document.getElementById('groupAdminModal').style.display = 'none';
+          scheduleRefresh();
         });
-      } else {
-        alert('Invalid Gift Card Code. Please check the code and try again.');
-      }
-    };
-
-    document.getElementById('applyProThemeBtn').onclick = () => updateSetting('theme', 'pro-obsidian');
-
-    document.getElementById('testMicBtn').onclick = () => {
-      const status = document.getElementById('micTestStatus');
-      status.textContent = 'Requesting microphone access...';
-      getMediaStreamWithFallback((stream) => {
-        status.textContent = '✅ Microphone working! Audio stream active.';
-        status.style.color = '#10b981';
-        stream.getTracks().forEach(t => t.stop());
       });
     };
+  }
 
-    document.getElementById('wsCallBtn').onclick = () => {
-      if (!activeTarget || activeTarget.type !== 'dm') return;
-      playSound(callingAudio);
-      getMediaStreamWithFallback((stream) => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        document.getElementById('mediaArea').style.display = 'flex';
-        const call = peer.call(`pulse-ws-${activeTarget.id}`, stream);
-        currentCall = call;
-        call.on('stream', (rem) => { stopCallAudio(); document.getElementById('remoteVideo').srcObject = rem; });
-        call.on('close', endActiveCall);
+  document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
+  document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP CHANNELS', '+ Group', promptCreateGroup);
+  document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
+  document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
+  document.getElementById('closeSettingsBtn').onclick = () => { document.getElementById('settingsOverlay').style.display = 'none'; };
+  document.getElementById('sidebarActionBtn').onclick = promptAddFriend;
+
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(`sec-${tab.dataset.sec}`).classList.add('active');
+    };
+  });
+
+  // Pro & Gift Inventory
+  document.getElementById('redeemCodeBtn').onclick = () => {
+    const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
+    if (VALID_GIFT_CODES.includes(code)) {
+      setState({ pulse_pro_permanent: true }, () => {
+        alert('🎉 Gift Card Redeemed! Pulse Pro is now permanently unlocked!');
+        updateProUI();
       });
-    };
+    } else {
+      alert('Invalid Gift Card Code. Please check the code and try again.');
+    }
+  };
 
-    document.getElementById('acceptCallBtn').onclick = () => {
-      stopCallAudio();
-      document.getElementById('callModal').style.display = 'none';
-      if (!currentCall) return;
-      getMediaStreamWithFallback((stream) => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        document.getElementById('mediaArea').style.display = 'flex';
-        currentCall.answer(stream);
-        currentCall.on('stream', (rem) => { document.getElementById('remoteVideo').srcObject = rem; });
-        currentCall.on('close', endActiveCall);
-      });
-    };
+  document.getElementById('genFriendPassBtn').onclick = () => {
+    const pass = 'PASS-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    navigator.clipboard.writeText(pass);
+    alert(`🎟️ Generated & Copied 3-Day Friend Pass: ${pass}`);
+  };
 
-    document.getElementById('declineCallBtn').onclick = () => { stopCallAudio(); document.getElementById('callModal').style.display = 'none'; if (currentCall) currentCall.close(); };
-    document.getElementById('endCallBtn').onclick = endActiveCall;
-    document.getElementById('shareScreenBtn').onclick = toggleScreenShare;
+  // Data Package Export
+  document.getElementById('exportDataPackageBtn').onclick = () => {
+    getState(['pulse_settings', 'pulse_friends', 'pulse_groups', 'pulse_history'], (res) => {
+      const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `pulse-chat-data-package-${Date.now()}.json`;
+      a.click();
+    });
+  };
 
-    document.getElementById('muteMicBtn').onclick = (e) => {
-      isMuted = !isMuted;
-      if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-      e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
-    };
+  // HypeSquad House Selection
+  document.querySelectorAll('[data-hype]').forEach(btn => {
+    btn.onclick = () => updateSetting('hypeSquad', btn.dataset.hype);
+  });
 
-    document.getElementById('saveDisplayNameBtn').onclick = () => updateSetting('displayName', document.getElementById('setDisplayName').value.trim() || 'User');
-    document.getElementById('saveActivityBtn').onclick = () => updateSetting('customActivity', document.getElementById('setCustomActivity').value.trim());
-    document.getElementById('applyRecoverCodeBtn').onclick = () => {
-      const c = document.getElementById('recoverCodeInput').value.trim().toUpperCase();
-      if (c.length === 4) setState({ pulse_my_code: c }, () => { initPeerNetwork(); alert('Code restored!'); });
-    };
-    document.getElementById('themeSelect').onchange = (e) => updateSetting('theme', e.target.value);
-    document.getElementById('setNoAnimations').onchange = (e) => updateSetting('noAnimations', e.target.checked);
-    document.getElementById('setRenderLimit').onchange = (e) => updateSetting('renderLimit', e.target.value);
-    document.getElementById('micDeviceSelect').onchange = (e) => updateSetting('micDeviceId', e.target.value);
-    document.getElementById('setEcho').onchange = (e) => updateSetting('echo', e.target.checked);
-    document.getElementById('setNoise').onchange = (e) => updateSetting('noise', e.target.checked);
-    document.getElementById('setAgc').onchange = (e) => updateSetting('agc', e.target.checked);
-    document.getElementById('setFontFamily').onchange = (e) => updateSetting('fontFamily', e.target.value);
-    document.getElementById('setFontSize').onchange = (e) => updateSetting('fontSize', e.target.value);
-  }
+  // TTS Preview
+  document.getElementById('previewTtsBtn').onclick = () => speakText('Pulse Chat Text to Speech is active and ready!');
 
-  if (document.getElementById('copyCodeBtn')) {
-    document.getElementById('copyCodeBtn').onclick = () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); };
-  }
-  if (document.getElementById('quickJoinBtn')) {
-    document.getElementById('quickJoinBtn').onclick = promptAddFriend;
-  }
+  // Bind All Inputs
+  const bindVal = (id, key) => { const el = document.getElementById(id); if (el) el.onchange = (e) => updateSetting(key, e.target.value); };
+  const bindChk = (id, key) => { const el = document.getElementById(id); if (el) el.onchange = (e) => updateSetting(key, e.target.checked); };
+
+  bindVal('setDisplayName', 'displayName');
+  bindVal('setUsername', 'username');
+  bindVal('setCustomActivity', 'customActivity');
+  bindVal('setAvatarEmoji', 'avatarEmoji');
+  bindVal('setPronouns', 'pronouns');
+  bindVal('setBio', 'bio');
+  bindVal('setCustomTyping', 'customTyping');
+  bindVal('setDmFilter', 'dmFilter');
+  bindVal('themeSelect', 'theme');
+  bindVal('setMsgDensity', 'msgDensity');
+  bindVal('setFontFamily', 'fontFamily');
+  bindVal('setFontSize', 'fontSize');
+  bindVal('setMsgGap', 'msgGap');
+  bindVal('setSaturation', 'saturation');
+  bindVal('setTtsRate', 'ttsRate');
+  bindVal('setSpoilerMode', 'spoilerMode');
+  bindVal('setRenderLimit', 'renderLimit');
+  bindVal('micDeviceSelect', 'micDeviceId');
+
+  bindChk('setHighContrast', 'highContrast');
+  bindChk('setNoAnimations', 'noAnimations');
+  bindChk('setShowSendBtn', 'showSendBtn');
+  bindChk('setAllowTts', 'allowTts');
+  bindChk('setShowReactions', 'showReactions');
+  bindChk('setAutoEmoji', 'autoEmoji');
+  bindChk('setStreamerMode', 'streamerMode');
+  bindChk('setDevMode', 'devMode');
+  bindChk('setEcho', 'echo');
+  bindChk('setNoise', 'noise');
+  bindChk('setAgc', 'agc');
+
+  document.getElementById('applyRecoverCodeBtn').onclick = () => {
+    const c = document.getElementById('recoverCodeInput').value.trim().toUpperCase();
+    if (c.length === 4) setState({ pulse_my_code: c }, () => { initPeerNetwork(); alert('Code restored!'); });
+  };
+
+  document.getElementById('logoutSessionBtn').onclick = () => {
+    if (confirm('Clear local session and reload?')) {
+      localStorage.clear();
+      window.location.reload();
+    }
+  };
+
+  document.getElementById('testMicBtn').onclick = () => {
+    const status = document.getElementById('micTestStatus');
+    status.textContent = 'Requesting microphone access...';
+    getMediaStreamWithFallback((stream) => {
+      status.textContent = '✅ Microphone working! Audio stream active.';
+      status.style.color = '#10b981';
+      stream.getTracks().forEach(t => t.stop());
+    });
+  };
+
+  document.getElementById('wsCallBtn').onclick = () => {
+    if (!activeTarget || activeTarget.type !== 'dm') return;
+    playSound(callingAudio);
+    getMediaStreamWithFallback((stream) => {
+      localStream = stream;
+      document.getElementById('localVideo').srcObject = stream;
+      document.getElementById('mediaArea').style.display = 'flex';
+      const call = peer.call(`pulse-ws-${activeTarget.id}`, stream);
+      currentCall = call;
+      call.on('stream', (rem) => { stopCallAudio(); document.getElementById('remoteVideo').srcObject = rem; });
+      call.on('close', endActiveCall);
+    });
+  };
+
+  document.getElementById('acceptCallBtn').onclick = () => {
+    stopCallAudio();
+    document.getElementById('callModal').style.display = 'none';
+    if (!currentCall) return;
+    getMediaStreamWithFallback((stream) => {
+      localStream = stream;
+      document.getElementById('localVideo').srcObject = stream;
+      document.getElementById('mediaArea').style.display = 'flex';
+      currentCall.answer(stream);
+      currentCall.on('stream', (rem) => { document.getElementById('remoteVideo').srcObject = rem; });
+      currentCall.on('close', endActiveCall);
+    });
+  };
+
+  document.getElementById('declineCallBtn').onclick = () => { stopCallAudio(); document.getElementById('callModal').style.display = 'none'; if (currentCall) currentCall.close(); };
+  document.getElementById('endCallBtn').onclick = endActiveCall;
+  document.getElementById('shareScreenBtn').onclick = toggleScreenShare;
+
+  document.getElementById('muteMicBtn').onclick = (e) => {
+    isMuted = !isMuted;
+    if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+    e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
+  };
+
+  document.getElementById('copyCodeBtn').onclick = () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); };
+  document.getElementById('quickJoinBtn').onclick = promptAddFriend;
   document.getElementById('sendBtn').onclick = () => handleSendMessage();
   document.getElementById('msgInput').onkeydown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); }
