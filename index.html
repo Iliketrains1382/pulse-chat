@@ -1,683 +1,1063 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="discord-dark">
 <head>
-  <meta charset="UTF-8">
-  <title>Pulse Workspace v11.0</title>
-  <script src="peerjs.min.js"></script>
-  <style>
-    /* All 9 Original Themes Preserved */
-    :root[data-theme="discord-dark"] { --bg-dark: #313338; --bg-panel: #2b2d31; --bg-card: #1e1f22; --border: #3f4147; --accent: #5865f2; --text: #f2f3f5; --muted: #949ba4; --sent: #5865f2; --rec: #2b2d31; }
-    :root[data-theme="cyber-dark"] { --bg-dark: #070a12; --bg-panel: #0f172a; --bg-card: #1e293b; --border: rgba(56,189,248,0.3); --accent: #00f2fe; --text: #f8fafc; --muted: #94a3b8; --sent: #0284c7; --rec: #1e293b; }
-    :root[data-theme="light"] { --bg-dark: #ffffff; --bg-panel: #f2f3f5; --bg-card: #e3e5e8; --border: #d4d7dc; --accent: #5865f2; --text: #060607; --muted: #4e5058; --sent: #5865f2; --rec: #f2f3f5; }
-    :root[data-theme="emerald"] { --bg-dark: #064e3b; --bg-panel: #022c22; --bg-card: #065f46; --border: #059669; --accent: #10b981; --text: #ecfdf5; --muted: #6ee7b7; --sent: #059669; --rec: #022c22; }
-    :root[data-theme="purple"] { --bg-dark: #2e1065; --bg-panel: #1e1b4b; --bg-card: #3b0764; --border: #7c3aed; --accent: #a855f7; --text: #faf5ff; --muted: #c084fc; --sent: #7c3aed; --rec: #1e1b4b; }
-    :root[data-theme="crimson"] { --bg-dark: #1f090d; --bg-panel: #2d0d13; --bg-card: #45121b; --border: #be123c; --accent: #f43f5e; --text: #fff1f2; --muted: #fda4af; --sent: #e11d48; --rec: #2d0d13; }
-    :root[data-theme="sunset"] { --bg-dark: #271300; --bg-panel: #3b1d00; --bg-card: #522900; --border: #d97706; --accent: #f59e0b; --text: #fffbeb; --muted: #fcd34d; --sent: #d97706; --rec: #3b1d00; }
-    :root[data-theme="pro-obsidian"] { --bg-dark: #09090b; --bg-panel: #121216; --bg-card: #18181f; --border: #eab308; --accent: #eab308; --text: #fafafa; --muted: #a1a1aa; --sent: #ca8a04; --rec: #18181f; }
-    :root[data-theme="matrix"] { --bg-dark: #020802; --bg-panel: #041204; --bg-card: #071f07; --border: #22c55e; --accent: #22c55e; --text: #bbf7d0; --muted: #4ade80; --sent: #15803d; --rec: #041204; }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pulse Chat v12.0 — Workspace</title>
+  <style id="baseStyles">
+    :root {
+      --bg-rail: #1e1f22;
+      --bg-sidebar: #2b2d31;
+      --bg-chat: #313338;
+      --bg-card: #383a40;
+      --bg-input: #383a40;
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #f2f3f5;
+      --muted: #949ba4;
+      --accent: #5865f2;
+      --accent-hover: #4752c4;
+      --success: #23a559;
+      --danger: #da373c;
+      --warning: #f0b232;
+      --font-size: 15px;
+      --msg-gap: 10px;
+      --ui-saturation: 100%;
+    }
+    [data-theme="cyber-dark"] { --bg-rail:#090d16; --bg-sidebar:#0f172a; --bg-chat:#131c31; --bg-card:#1e293b; --bg-input:#1e293b; --accent:#38bdf8; }
+    [data-theme="emerald"] { --bg-rail:#06140e; --bg-sidebar:#0b2419; --bg-chat:#0f2e20; --bg-card:#16422f; --bg-input:#16422f; --accent:#10b981; }
+    [data-theme="purple"] { --bg-rail:#13091f; --bg-sidebar:#1e1033; --bg-chat:#261440; --bg-card:#351c59; --bg-input:#351c59; --accent:#a855f7; }
+    [data-theme="crimson"] { --bg-rail:#1a080c; --bg-sidebar:#290d13; --bg-chat:#361119; --bg-card:#4a1823; --bg-input:#4a1823; --accent:#f43f5e; }
+    [data-theme="sunset"] { --bg-rail:#1c0f0a; --bg-sidebar:#2b1710; --bg-chat:#381e15; --bg-card:#4d2a1d; --bg-input:#4d2a1d; --accent:#fb923c; }
+    [data-theme="pro-obsidian"] { --bg-rail:#050505; --bg-sidebar:#0d0d0f; --bg-chat:#121215; --bg-card:#1b1b20; --bg-input:#1b1b20; --accent:#eab308; }
+    [data-theme="matrix"] { --bg-rail:#000800; --bg-sidebar:#001400; --bg-chat:#001f00; --bg-card:#002e00; --bg-input:#002e00; --text:#4ade80; --accent:#22c55e; }
+    [data-theme="light"] { --bg-rail:#e3e5e8; --bg-sidebar:#f2f3f5; --bg-chat:#ffffff; --bg-card:#ebedef; --bg-input:#ebedef; --text:#060607; --muted:#4e5058; --border:rgba(0,0,0,0.1); }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-    html { filter: saturate(var(--ui-saturation, 100%)); }
-    body { height: 100vh; background: var(--bg-dark); color: var(--text); display: flex; overflow: hidden; font-size: var(--font-size, 15px); }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-chat);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: var(--font-size);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      filter: saturate(var(--ui-saturation));
+    }
     body.flip-mode { transform: rotate(180deg); }
     body.no-animations * { transition: none !important; animation: none !important; }
-    body.high-contrast { --border: #ffffff !important; --muted: #e2e8f0 !important; }
-    body.compact-mode .message { max-width: 96%; padding: 4px 10px; border-radius: 6px; margin-bottom: 2px; align-self: flex-start !important; background: transparent !important; border: none !important; border-left: 2px solid var(--border) !important; }
+    body.high-contrast { --border: rgba(255,255,255,0.4); }
 
-    .server-rail { width: 66px; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 12px; }
-    .rail-btn { width: 44px; height: 44px; border-radius: 50%; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border); font-size: 1.15rem; cursor: pointer; display: flex; align-items: center; justify-content: center; position: relative; }
-    .rail-btn:hover, .rail-btn.active { border-radius: 14px; background: var(--accent); color: #fff; }
-    .rail-badge { position: absolute; top: -2px; right: -2px; background: #ef4444; color: #fff; font-size: 0.68rem; padding: 2px 5px; border-radius: 10px; font-weight: 800; }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-weight: 700;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-sec { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-danger { background: var(--danger); color: #fff; }
+    input, select, textarea {
+      background: var(--bg-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 
-    .sidebar { width: 270px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-    .sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 800; display: flex; justify-content: space-between; align-items: center; }
-    .brand-title { cursor: pointer; user-select: none; }
-    .list-container { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-    .list-card { padding: 10px 12px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid transparent; }
+    /* Navigation Rail */
+    .rail {
+      width: 68px;
+      background: var(--bg-rail);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 0;
+      gap: 10px;
+      border-right: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .brand-logo {
+      width: 44px; height: 44px; border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent), #ec4899);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.3rem; font-weight: 900; cursor: pointer; user-select: none;
+    }
+    .rail-btn {
+      width: 44px; height: 44px; border-radius: 14px;
+      background: var(--bg-sidebar); color: var(--text);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.15rem; position: relative; padding: 0;
+    }
+    .rail-btn.active { background: var(--accent); border-radius: 12px; }
+    .badge-pill {
+      position: absolute; top: -4px; right: -4px;
+      background: var(--danger); color: #fff;
+      font-size: 0.65rem; font-weight: 800;
+      padding: 1px 5px; border-radius: 10px;
+    }
+    .rail-spacer { flex: 1; }
+
+    /* Sidebar */
+    .sidebar {
+      width: 260px;
+      background: var(--bg-sidebar);
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .sidebar-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 800;
+      font-size: 0.8rem;
+      letter-spacing: 0.04em;
+    }
+    .code-bar {
+      padding: 8px 12px;
+      background: rgba(0,0,0,0.18);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.76rem;
+    }
+    .sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .list-card {
+      padding: 9px 10px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      transition: 0.12s;
+    }
     .list-card:hover { background: rgba(255,255,255,0.06); }
-    .list-card.active { background: rgba(88,101,242,0.18); border-color: var(--accent); }
+    .list-card.active { background: var(--accent); color: #fff; }
+    .list-card.active .muted-sub { color: rgba(255,255,255,0.85) !important; }
+    .user-footer {
+      padding: 10px 12px;
+      background: var(--bg-rail);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .pro-badge {
+      background: linear-gradient(90deg, #f59e0b, #eab308);
+      color: #000; font-size: 0.65rem; font-weight: 900;
+      padding: 2px 6px; border-radius: 6px;
+    }
+    .guild-tag-pill {
+      background: rgba(88,101,242,0.25);
+      border: 1px solid var(--accent);
+      font-size: 0.65rem; font-weight: 800;
+      padding: 1px 5px; border-radius: 5px; margin-left: 5px;
+    }
 
-    .user-footer { padding: 10px 14px; background: var(--bg-card); border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-    .pro-badge { background: linear-gradient(90deg, #f59e0b, #ec4899); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 6px; font-weight: 800; margin-left: 4px; }
-    .guild-tag-pill { background: rgba(88,101,242,0.25); border: 1px solid var(--accent); color: var(--text); font-size: 0.65rem; padding: 1px 5px; border-radius: 5px; font-weight: 800; margin-left: 5px; }
-    .hype-pill { font-size: 0.65rem; padding: 2px 6px; border-radius: 6px; background: rgba(255,255,255,0.1); margin-left: 4px; }
+    /* Main Workspace & Split Screen */
+    .workspace-wrap {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+    .chat-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .split-pane {
+      width: 44%;
+      border-left: 2px solid var(--accent);
+      background: var(--bg-chat);
+      display: none;
+      flex-direction: column;
+    }
+    .chat-header {
+      height: 54px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .header-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .boost-strip {
+      background: linear-gradient(90deg, rgba(236,72,153,0.18), rgba(88,101,242,0.18));
+      border-bottom: 1px solid var(--border);
+      padding: 6px 16px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.76rem;
+    }
+    .pinned-banner {
+      background: rgba(240,178,50,0.14);
+      border-bottom: 1px solid rgba(240,178,50,0.3);
+      padding: 6px 16px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.78rem;
+    }
+    .channel-tabs {
+      display: none;
+      gap: 6px;
+      padding: 6px 16px;
+      background: rgba(0,0,0,0.15);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .channel-pill {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.76rem;
+      background: var(--bg-card);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .channel-pill.active { background: var(--accent); color: #fff; }
 
-    .main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
-    .chat-header { padding: 12px 20px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; gap: 10px; }
-    .telemetry-strip { padding: 5px 20px; background: var(--bg-card); border-bottom: 1px solid var(--border); font-size: 0.76rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
-    .boost-bar-strip { display: none; padding: 6px 20px; background: linear-gradient(90deg, rgba(236,72,153,0.15), rgba(88,101,242,0.15)); border-bottom: 1px solid var(--border); font-size: 0.78rem; align-items: center; justify-content: space-between; gap: 12px; }
-    .boost-progress-track { flex: 1; max-width: 240px; height: 8px; background: var(--bg-card); border-radius: 99px; overflow: hidden; border: 1px solid var(--border); }
-    .boost-progress-fill { height: 100%; background: linear-gradient(90deg, #ec4899, #a855f7); width: 0%; transition: width 0.3s; }
+    /* Call & Watch Together Area */
+    .media-area {
+      display: none;
+      flex-direction: column;
+      background: #0b0d12;
+      border-bottom: 1px solid var(--border);
+      padding: 12px;
+      gap: 10px;
+      max-height: 56vh;
+      overflow-y: auto;
+    }
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .video-card {
+      position: relative;
+      background: #161922;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      aspect-ratio: 16/9;
+    }
+    .video-card video { width: 100%; height: 100%; object-fit: cover; }
+    .video-label {
+      position: absolute; bottom: 6px; left: 8px;
+      background: rgba(0,0,0,0.65); padding: 2px 8px;
+      border-radius: 6px; font-size: 0.72rem; font-weight: 700;
+    }
+    .call-controls {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .nerd-panel {
+      display: none;
+      background: #06090f;
+      border: 1px solid #22c55e;
+      color: #4ade80;
+      font-family: monospace;
+      font-size: 0.75rem;
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
 
-    .messages-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--msg-gap, 10px); }
-    .empty-welcome { margin: auto; text-align: center; max-width: 440px; background: var(--bg-panel); border: 1px solid var(--border); padding: 24px; border-radius: 16px; display: flex; flex-direction: column; gap: 10px; }
-    .message { max-width: 68%; padding: 10px 14px; border-radius: 14px; word-break: break-word; line-height: 1.4; position: relative; }
-    .message.sent { align-self: flex-end; background: var(--sent); color: #fff; }
-    .message.received { align-self: flex-start; background: var(--rec); border: 1px solid var(--border); }
-    .msg-meta { font-size: 0.68rem; opacity: 0.75; margin-top: 4px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-    .spoiler-box { background: #000; color: transparent; border-radius: 4px; padding: 0 4px; cursor: pointer; user-select: none; }
-    .spoiler-box.revealed { background: rgba(255,255,255,0.15); color: inherit; }
+    /* Messages Stream */
+    .chat-body-split {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    .messages-box {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--msg-gap);
+    }
+    .member-drawer {
+      width: 200px;
+      background: var(--bg-sidebar);
+      border-left: 1px solid var(--border);
+      padding: 10px;
+      overflow-y: auto;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .unread-divider {
+      display: flex; align-items: center; gap: 8px;
+      color: var(--danger); font-size: 0.72rem; font-weight: 800;
+      margin: 4px 0;
+    }
+    .unread-divider::before, .unread-divider::after {
+      content: ""; flex: 1; height: 1px; background: var(--danger);
+    }
+    .message {
+      max-width: 78%;
+      padding: 9px 13px;
+      border-radius: 12px;
+      background: var(--bg-card);
+      position: relative;
+      word-wrap: break-word;
+      line-height: 1.4;
+    }
+    .message.sent {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+    }
+    .message.received { align-self: flex-start; }
+    .message.mentioned {
+      border: 1px solid var(--warning);
+      box-shadow: 0 0 0 2px rgba(240,178,50,0.2);
+    }
+    .msg-actions {
+      display: none;
+      position: absolute;
+      top: -12px;
+      right: 8px;
+      background: var(--bg-rail);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 4px;
+      gap: 4px;
+      z-index: 5;
+    }
+    .message:hover .msg-actions { display: flex; }
+    .msg-actions button { padding: 2px 5px; font-size: 0.68rem; background: transparent; color: var(--text); }
+    .msg-meta {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 6px; font-size: 0.68rem; opacity: 0.75; margin-top: 4px;
+    }
+    .reply-quote {
+      font-size: 0.74rem;
+      background: rgba(0,0,0,0.22);
+      border-left: 3px solid #fff;
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 5px;
+      opacity: 0.9;
+    }
+    .spoiler-box {
+      background: #111; color: transparent; border-radius: 4px;
+      padding: 0 4px; cursor: pointer; user-select: none;
+    }
+    .spoiler-box.revealed { background: rgba(0,0,0,0.3); color: inherit; }
 
-    .typing-bar { padding: 4px 24px; font-size: 0.78rem; color: var(--accent); font-style: italic; height: 22px; }
-    .input-bar { padding: 12px 20px; background: var(--bg-panel); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
-    input, textarea, select { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 10px; outline: none; font-size: 0.88rem; }
-    button { background: var(--accent); color: #fff; font-weight: 700; border: none; padding: 8px 14px; border-radius: 10px; cursor: pointer; }
-    button.btn-sec { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
-    button.btn-danger { background: #ef4444; color: #fff; }
-    button.btn-success { background: #10b981; color: #000; }
-    button.btn-boost { background: linear-gradient(90deg, #ec4899, #8b5cf6); color: #fff; }
+    /* Composer */
+    .composer-wrap {
+      padding: 10px 16px 14px;
+      border-top: 1px solid var(--border);
+      position: relative;
+      background: var(--bg-chat);
+    }
+    .reply-bar {
+      display: none;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-card);
+      padding: 5px 10px;
+      border-radius: 8px 8px 0 0;
+      font-size: 0.76rem;
+      border: 1px solid var(--border);
+      border-bottom: none;
+    }
+    .slash-menu {
+      display: none;
+      position: absolute;
+      bottom: 66px;
+      left: 16px;
+      width: 300px;
+      background: var(--bg-sidebar);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 6px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+      z-index: 20;
+    }
+    .slash-item {
+      padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+    }
+    .slash-item:hover { background: var(--accent); color: #fff; }
+    .composer-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .composer-row input[type="text"] { flex: 1; }
+    .typing-bar {
+      height: 16px;
+      font-size: 0.73rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
 
-    .media-area { display: none; padding: 12px; background: #000; flex-direction: column; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
-    .soundboard { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; align-items: center; }
-
-    /* Full-Screen Drawers (User Settings & Group/Server Settings) */
-    .settings-overlay { position: fixed; inset: 0; background: var(--bg-dark); display: none; z-index: 200; }
-    .settings-nav { width: 270px; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; gap: 3px; overflow-y: auto; }
-    .settings-cat { font-size: 0.68rem; font-weight: 800; color: var(--muted); text-transform: uppercase; padding: 10px 10px 4px; letter-spacing: 0.05em; }
-    .settings-tab, .grp-tab { text-align: left; background: transparent; color: var(--muted); padding: 7px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
-    .settings-tab:hover, .grp-tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
-    .settings-tab.active, .grp-tab.active { background: rgba(255,255,255,0.1); color: var(--text); }
-    .settings-content { flex: 1; padding: 28px 40px; overflow-y: auto; max-width: 920px; }
-    .settings-section, .grp-section { display: none; flex-direction: column; gap: 16px; }
+    /* Modals & Overlays */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-card {
+      background: var(--bg-sidebar);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 780px;
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+    .modal-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 800;
+    }
+    .modal-body {
+      padding: 16px 18px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .tabs-row {
+      display: flex;
+      gap: 6px;
+      padding: 10px 18px;
+      background: var(--bg-rail);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .settings-tab, .grp-tab {
+      background: transparent;
+      color: var(--muted);
+      padding: 6px 10px;
+      border-radius: 6px;
+    }
+    .settings-tab.active, .grp-tab.active { background: var(--accent); color: #fff; }
+    .settings-section, .grp-section { display: none; flex-direction: column; gap: 10px; }
     .settings-section.active, .grp-section.active { display: flex; }
-    .setting-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; position: relative; overflow: hidden; }
-    .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); gap: 12px; }
-    .setting-row:last-child { border-bottom: none; }
-    .pro-tag { background: linear-gradient(90deg, #f59e0b, #ec4899); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 5px; font-weight: 800; margin-left: 6px; vertical-align: middle; }
-    .boost-tag { background: linear-gradient(90deg, #ec4899, #8b5cf6); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 5px; font-weight: 800; margin-left: 6px; vertical-align: middle; }
-
-    .plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .plan-card { background: var(--bg-card); border: 2px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
-    .plan-card.selected { border-color: #eab308; box-shadow: 0 0 15px rgba(234,179,8,0.2); }
-    .insight-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-    .insight-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
-
-    .pro-lock-screen { position: absolute; inset: 0; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(4px); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; z-index: 10; gap: 8px; }
-    .pro-lock-screen h4 { color: #fbbf24; font-size: 1.05rem; }
-    .pro-lock-screen p { color: #cbd5e1; font-size: 0.82rem; max-width: 380px; }
-
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 100; }
-    .modal-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 16px; padding: 24px; width: 480px; max-height: 85vh; overflow-y: auto; text-align: center; display: flex; flex-direction: column; gap: 14px; }
+    .setting-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg-card);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+    .empty-welcome {
+      margin: auto;
+      text-align: center;
+      max-width: 380px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+    }
+    /* Panic Boss Mode Overlay */
+    #panicOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #ffffff;
+      color: #1f2937;
+      z-index: 9999;
+      padding: 40px;
+      font-family: Georgia, serif;
+      overflow-y: auto;
+    }
+    /* App Lock PIN Overlay */
+    #pinLockOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #090d16;
+      z-index: 9000;
+      align-items: center;
+      justify-content: center;
+    }
   </style>
+  <style id="customUserCss"></style>
 </head>
 <body>
 
-  <div class="server-rail">
-    <button class="rail-btn active" id="railFriends" title="Direct Messages">💬</button>
-    <button class="rail-btn" id="railGroups" title="Group Servers">👥</button>
-    <button class="rail-btn" id="railRequests" title="Requests">📩 <span class="rail-badge" id="reqBadge" style="display:none;">0</span></button>
-    <div style="flex:1;"></div>
-    <button class="rail-btn" id="archiveBtn" title="Cloud Sync & Archive">☁️</button>
-    <button class="rail-btn" id="railSettings" title="User Settings">⚙️</button>
-  </div>
+  <!-- Left Rail -->
+  <nav class="rail">
+    <div id="brandLogo" class="brand-logo" title="Pulse Chat v12.0">⚡</div>
+    <button id="railFriends" class="rail-btn active" title="Direct Messages">💬</button>
+    <button id="railGroups" class="rail-btn" title="Group Servers">🌐</button>
+    <button id="railRequests" class="rail-btn" title="Requests">
+      📥<span id="reqBadge" class="badge-pill" style="display:none;">0</span>
+    </button>
+    <button id="railQueue" class="rail-btn" title="Offline Outbox Queue">
+      🕒<span id="queueBadge" class="badge-pill" style="display:none;">0</span>
+    </button>
+    <button id="railStickers" class="rail-btn" title="Custom Sticker & Meme Maker">🎨</button>
+    <button id="railWhiteboard" class="rail-btn" title="Live Collaborative Whiteboard">✏️</button>
+    <div class="rail-spacer"></div>
+    <button id="railWhatsNew" class="rail-btn" title="What's New in v12.0">✨</button>
+    <button id="railShortcuts" class="rail-btn" title="Keyboard Shortcuts (Ctrl+/)">⌨️</button>
+    <button id="railSettings" class="rail-btn" title="User Settings">⚙️</button>
+  </nav>
 
-  <div class="sidebar">
+  <!-- Sidebar -->
+  <aside class="sidebar">
     <div class="sidebar-header">
-      <span class="brand-title" id="brandLogo">⚡ <span id="sidebarTitle">DIRECT MESSAGES</span></span>
-      <button class="btn-sec" id="sidebarActionBtn" style="padding: 4px 8px; font-size: 0.75rem;">+ Add</button>
+      <span id="sidebarTitle">DIRECT MESSAGES</span>
+      <button id="sidebarActionBtn" style="padding:4px 9px; font-size:0.75rem;">+ Add</button>
     </div>
-    <div class="list-container" id="sidebarList"></div>
+    <div class="code-bar">
+      <span>Code: <strong id="myCodeDisplay">----</strong></span>
+      <div style="display:flex; gap:4px;">
+        <button id="copyCodeBtn" class="btn-sec" style="padding:3px 7px; font-size:0.72rem;">Copy</button>
+        <button id="archiveBtn" class="btn-sec" style="padding:3px 7px; font-size:0.72rem;" title="Archive Old Messages">☁️</button>
+      </div>
+    </div>
+    <div style="padding:6px 8px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; font-size:0.74rem;">
+      <span id="meshStatusText">🟡 Connecting...</span>
+      <span id="owlBanner" style="color:#fbbf24;"></span>
+    </div>
+    <div id="sidebarList" class="sidebar-list"></div>
     <div class="user-footer">
-      <div style="overflow:hidden;">
-        <div style="font-weight: 700; font-size: 0.88rem; display:flex; align-items:center; flex-wrap:wrap;">
-          <span id="footerAvatar" style="margin-right:5px;">👤</span>
-          <span id="footerDisplayName">User</span>
-          <span class="guild-tag-pill" id="footerGuildTag" style="display:none;"></span>
-          <span class="pro-badge" id="wsProBadge" style="display:none;">PRO</span>
-          <span class="hype-pill" id="footerHypeBadge" style="display:none;"></span>
+      <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+        <span id="footerAvatar" style="font-size:1.35rem;">😎</span>
+        <div style="overflow:hidden;">
+          <div style="font-weight:800; font-size:0.82rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            <span id="footerDisplayName">User</span>
+            <span id="footerGuildTag" class="guild-tag-pill" style="display:none;"></span>
+            <span id="wsProBadge" class="pro-badge" style="display:none;">PRO</span>
+          </div>
+          <div id="footerCustomActivity" style="font-size:0.7rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Ready to chat</div>
         </div>
-        <div style="font-size: 0.72rem; color: var(--muted);" id="footerCustomActivity">Ready to chat</div>
-        <div style="font-size: 0.72rem; color: var(--accent); font-family: monospace;">CODE: <span id="myCodeDisplay">----</span></div>
       </div>
-      <div style="display:flex; flex-direction:column; gap:4px;">
-        <button class="btn-sec" id="copyCodeBtn" style="padding: 3px 8px; font-size: 0.72rem;">Copy Code</button>
-        <button class="btn-sec" id="quickJoinBtn" style="padding: 3px 8px; font-size: 0.72rem;">+ Quick Add</button>
+      <select id="quickStatusSelect" style="padding:4px 6px; font-size:0.72rem; width:82px;">
+        <option value="online">🟢 Online</option>
+        <option value="idle">🌙 Idle</option>
+        <option value="dnd">⛔ DND</option>
+        <option value="invisible">👻 Invis</option>
+      </select>
+    </div>
+  </aside>
+
+  <!-- Main Workspace + Optional Split-Screen Pane -->
+  <div class="workspace-wrap">
+    <main class="chat-pane">
+      <header class="chat-header">
+        <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+          <strong id="activeChatTitle" style="font-size:1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Select a Friend or Group</strong>
+          <span id="headerPeerStatus" style="font-size:0.75rem; color:var(--muted);"></span>
+          <span id="headerBoostLevelBadge" class="pro-badge" style="display:none;">LEVEL 0</span>
+        </div>
+        <div class="header-actions">
+          <button id="profileInspectBtn" class="btn-sec" style="display:none;" title="Friend Info & Notes">👤 Info</button>
+          <button id="splitScreenBtn" class="btn-sec" style="display:none;" title="Open in Split Screen">◫ Split</button>
+          <button id="toggleMembersBtn" class="btn-sec" style="display:none;" title="Toggle Member List">👥</button>
+          <button id="addGroupMemberBtn" class="btn-sec" style="display:none;">+ Member</button>
+          <button id="headerBoostBtn" class="btn-sec" style="display:none;">🚀 Boost</button>
+          <button id="groupSettingsBtn" class="btn-sec" style="display:none;">⚙️ Server</button>
+          <button id="wsCallBtn" class="btn-success" style="display:none;">📞 Call</button>
+        </div>
+      </header>
+
+      <!-- Group Text/Voice Channels Strip -->
+      <div id="channelTabsBar" class="channel-tabs"></div>
+
+      <!-- Group Boost Bar -->
+      <div id="groupBoostBarStrip" class="boost-strip">
+        <span id="boostBarLabel">🚀 Group Boosts: 0 / 2</span>
+        <div style="width:120px; height:6px; background:rgba(255,255,255,0.15); border-radius:4px; overflow:hidden;">
+          <div id="boostBarFill" style="height:100%; width:0%; background:var(--accent);"></div>
+        </div>
+        <span id="boostPerksSummary" style="color:var(--muted);"></span>
+      </div>
+
+      <!-- Pinned Message Banner -->
+      <div id="pinnedBanner" class="pinned-banner">
+        <span id="pinnedBannerText">📌 Pinned: ...</span>
+        <button id="unpinMsgBtn" class="btn-sec" style="padding:2px 6px; font-size:0.7rem;">Unpin</button>
+      </div>
+
+      <!-- Video / Audio Call + Watch Together Area -->
+      <section id="mediaArea" class="media-area">
+        <div id="videoGrid" class="video-grid">
+          <div class="video-card">
+            <video id="localVideo" autoplay muted playsinline></video>
+            <div class="video-label">You (<span id="callTimerText">00:00</span>)</div>
+          </div>
+          <div class="video-card">
+            <video id="remoteVideo" autoplay playsinline></video>
+            <div class="video-label" id="remoteVideoLabel">Peer</div>
+          </div>
+        </div>
+
+        <!-- Watch Together YouTube Sync -->
+        <div id="watchTogetherBox" style="display:none; background:#161922; padding:8px; border-radius:8px; border:1px solid var(--border);">
+          <div style="display:flex; gap:6px; margin-bottom:6px;">
+            <input id="ytSyncUrlInput" type="text" placeholder="Paste YouTube URL to Watch Together..." style="flex:1;" />
+            <button id="loadYtSyncBtn" class="btn-success">Load & Sync</button>
+            <button id="closeYtSyncBtn" class="btn-sec">✕</button>
+          </div>
+          <iframe id="ytSyncFrame" width="100%" height="210" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen style="border-radius:6px; display:none;"></iframe>
+        </div>
+
+        <div class="call-controls">
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <button id="muteMicBtn" class="btn-sec">🎙️ Mute</button>
+            <button id="switchCamBtn" class="btn-sec">🔄 Switch Cam</button>
+            <button id="shareScreenBtn" class="btn-sec">🖥️ Screen (<span id="screenTimeLeft">10:00</span>)</button>
+            <button id="pipCallBtn" class="btn-sec">🗔 PiP</button>
+            <button id="toggleWatchBtn" class="btn-sec">📺 Watch Together</button>
+            <button id="toggleNerdStatsBtn" class="btn-sec">📊 Nerd Stats</button>
+            <button id="endCallBtn" class="btn-danger">End Call</button>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem;">
+            <span>Peer Vol:</span>
+            <input id="peerCallVolSlider" type="range" min="0" max="2" step="0.1" value="1" style="width:80px;" />
+          </div>
+        </div>
+
+        <div id="nerdStatsPanel" class="nerd-panel">
+          <div>🎙️ Mic Input Level: <progress id="micLevelMeter" value="0" max="100" style="width:120px;"></progress></div>
+          <div id="webrtcStatsReadout">RTT: -- ms | Bitrate: -- kbps | ICE Candidate: --</div>
+        </div>
+      </section>
+
+      <!-- Chat Messages & Optional Group Member Sidebar -->
+      <div class="chat-body-split">
+        <div id="messagesBox" class="messages-box"></div>
+        <aside id="groupMemberDrawer" class="member-drawer"></aside>
+      </div>
+
+      <!-- Composer -->
+      <footer class="composer-wrap">
+        <div class="typing-bar">
+          <span id="typingIndicator"></span>
+          <span id="slowmodeCountdown" style="color:var(--warning);"></span>
+        </div>
+        <div id="replyPreviewBar" class="reply-bar">
+          <span id="replyPreviewText">Replying to...</span>
+          <button id="cancelReplyBtn" class="btn-sec" style="padding:1px 6px; font-size:0.7rem;">✕</button>
+        </div>
+        <div id="slashMenu" class="slash-menu"></div>
+        <div class="composer-row">
+          <label class="btn-sec" style="padding:7px 10px; cursor:pointer;" title="Send Image or File">
+            📎<input id="fileAttachInput" type="file" style="display:none;" />
+          </label>
+          <button id="emojiPickerBtn" class="btn-sec" title="Pulse Pro Emoji & Sticker Picker">😊</button>
+          <button id="scheduleMsgBtn" class="btn-sec" title="Schedule Message">⏰</button>
+          <button id="createPollBtn" class="btn-sec" title="Create Poll">📊</button>
+          <input id="msgInput" type="text" placeholder="Message... (Try /tts, /rps, /poll, **bold**, ||spoiler||)" autocomplete="off" />
+          <button id="sendBtn">Send</button>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Secondary Split-Screen Chat Pane -->
+    <section id="splitChatPane" class="split-pane">
+      <div class="chat-header">
+        <strong id="splitChatTitle" style="font-size:0.9rem;">Split Chat</strong>
+        <button id="closeSplitBtn" class="btn-sec" style="padding:3px 8px;">✕ Close Split</button>
+      </div>
+      <div id="splitMessagesBox" class="messages-box"></div>
+      <div class="composer-wrap">
+        <div class="composer-row">
+          <input id="splitMsgInput" type="text" placeholder="Reply in split chat..." />
+          <button id="splitSendBtn">Send</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Emoji & Custom Sticker Drawer Modal -->
+  <div id="emojiStickerModal" class="overlay">
+    <div class="modal-card" style="max-width:460px;">
+      <div class="modal-header">
+        <span>😊 Emoji & Custom Sticker Tray</span>
+        <button id="closeEmojiStickerModal" class="btn-sec">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="proEmojiLockNotice" style="background:rgba(234,179,8,0.15); border:1px solid #eab308; padding:8px; border-radius:8px; font-size:0.78rem; display:none;">
+          ⭐ Full Emoji Picker & Custom Sticker Tray requires <strong>Pulse Pro</strong> (or 3-Day Free Trial).
+        </div>
+        <div id="emojiGridBox" style="display:grid; grid-template-columns:repeat(8,1fr); gap:6px; font-size:1.35rem; text-align:center;"></div>
+        <hr style="border-color:var(--border);" />
+        <div style="font-weight:700; font-size:0.82rem;">🎨 Your Saved Custom Stickers & Memes</div>
+        <div id="savedStickersGrid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px;"></div>
       </div>
     </div>
   </div>
 
-  <div class="main-area">
-    <div class="chat-header" id="mainChatHeader">
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span id="activeChatTitle">Select a Friend or Group</span>
-        <span class="boost-tag" id="headerBoostLevelBadge" style="display:none;">LEVEL 0</span>
+  <!-- Custom Sticker & Meme Maker Modal (Replaces GIF Search) -->
+  <div id="stickerMakerModal" class="overlay">
+    <div class="modal-card" style="max-width:520px;">
+      <div class="modal-header">
+        <span>🎨 Custom Sticker & Meme Maker (Zero-API)</span>
+        <button id="closeStickerMakerModal" class="btn-sec">✕</button>
       </div>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <button class="btn-boost" id="headerBoostBtn" style="display:none;">🚀 Boost</button>
-        <button class="btn-sec" id="groupSettingsBtn" style="display:none;">⚙️ Server Settings</button>
-        <button class="btn-sec" id="addGroupMemberBtn" style="display:none;">+ Add Member</button>
-        <button id="wsCallBtn" style="display:none;">📹 Call</button>
-        <button class="btn-sec" id="openWorkspaceBtn" title="Open Workspace in Full Tab">Full ↗</button>
+      <div class="modal-body">
+        <input id="memeImageUpload" type="file" accept="image/*" />
+        <div style="display:flex; gap:8px;">
+          <input id="memeTopText" type="text" placeholder="TOP MEME TEXT" style="flex:1;" />
+          <input id="memeBottomText" type="text" placeholder="BOTTOM MEME TEXT" style="flex:1;" />
+        </div>
+        <canvas id="memeCanvas" width="320" height="240" style="background:#111; border-radius:8px; margin:auto; border:1px solid var(--border);"></canvas>
+        <div style="display:flex; gap:8px;">
+          <button id="saveStickerBtn" class="btn-success" style="flex:1;">💾 Save to Sticker Tray</button>
+          <button id="sendStickerNowBtn" style="flex:1;">🚀 Send to Active Chat</button>
+        </div>
       </div>
-    </div>
-
-    <!-- Group Boost Progress Strip -->
-    <div class="boost-bar-strip" id="groupBoostBarStrip">
-      <span id="boostBarLabel">🚀 Group Boosts: 0 / 2 for Level 1</span>
-      <div class="boost-progress-track"><div class="boost-progress-fill" id="boostBarFill"></div></div>
-      <span id="boostPerksSummary" style="color:var(--muted); font-size:0.72rem;">96 kbps Audio • 10 MB Uploads</span>
-    </div>
-
-    <div class="telemetry-strip">
-      <span id="meshStatusText">🟢 P2P Mesh Online • Zero-Latency Sync Active</span>
-      <span id="owlBanner">☁️ GitHub Cloud Sync & Local Archive Ready</span>
-    </div>
-
-    <!-- Active Call & Custom Soundboard Area -->
-    <div id="mediaArea" class="media-area">
-      <div style="display:flex; gap:12px;">
-        <video id="localVideo" autoplay muted playsinline style="width: 220px; border-radius: 8px; background:#111;"></video>
-        <video id="remoteVideo" autoplay playsinline style="width: 220px; border-radius: 8px; background:#111;"></video>
-      </div>
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <button class="btn-sec" id="muteMicBtn">🎙️ Mute</button>
-        <button class="btn-sec" id="shareScreenBtn">🖥️ Share Screen (<span id="screenTimeLeft">10:00</span> left)</button>
-        <button class="btn-danger" id="endCallBtn">End Call</button>
-      </div>
-      <div class="soundboard" id="customSoundboardBar"></div>
-    </div>
-
-    <div class="messages-box" id="messagesBox"></div>
-    <div class="typing-bar" id="typingIndicator"></div>
-
-    <div class="input-bar">
-      <textarea id="msgInput" placeholder="Message... (Try /tts hello, /party, /flip, or ||spoiler||)" style="flex: 1; height: 42px; resize: none;"></textarea>
-      <button id="sendBtn" style="padding: 10px 20px;">Send</button>
     </div>
   </div>
 
-  <!-- One-Click Group Member Adder Modal -->
-  <div class="modal-overlay" id="groupMemberModal">
-    <div class="modal-card" style="text-align:left;">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h3>Add Friends to Group</h3>
-        <button class="btn-sec" id="closeGroupMemberModal" style="padding:4px 8px;">✕</button>
+  <!-- Live Collaborative Whiteboard Modal (Replaces Link Previews) -->
+  <div id="whiteboardModal" class="overlay">
+    <div class="modal-card" style="max-width:680px;">
+      <div class="modal-header">
+        <span>✏️ Live Collaborative Whiteboard (Synced P2P)</span>
+        <button id="closeWhiteboardModal" class="btn-sec">✕</button>
       </div>
-      <div id="groupFriendPickerList" style="display:flex; flex-direction:column; gap:8px; max-height:260px; overflow-y:auto;"></div>
+      <div class="modal-body">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input id="wbColorPicker" type="color" value="#38bdf8" style="width:44px; height:34px; padding:2px;" />
+          <select id="wbBrushSize">
+            <option value="2">Thin (2px)</option>
+            <option value="5" selected>Medium (5px)</option>
+            <option value="12">Marker (12px)</option>
+          </select>
+          <button id="wbClearBtn" class="btn-danger">Clear Board</button>
+          <span style="font-size:0.75rem; color:var(--muted);">Strokes broadcast live to your active DM or Group!</span>
+        </div>
+        <canvas id="whiteboardCanvas" width="620" height="360" style="background:#0f172a; border-radius:10px; border:1px solid var(--border); cursor:crosshair; touch-action:none;"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Friend Info, Mutuals & Private Notes Modal -->
+  <div id="friendInfoModal" class="overlay">
+    <div class="modal-card" style="max-width:460px;">
+      <div class="modal-header">
+        <span id="friendInfoTitle">Friend Profile</span>
+        <button id="closeFriendInfoModal" class="btn-sec">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row">
+          <span>Custom Nickname</span>
+          <input id="friendCustomNick" type="text" placeholder="Alias..." />
+        </div>
+        <div class="setting-row" style="flex-direction:column; align-items:stretch;">
+          <span>Private Friend Note (Only visible to you)</span>
+          <textarea id="friendPrivateNote" rows="3" placeholder="Birthday, favorite games, timezone..."></textarea>
+        </div>
+        <div class="setting-row">
+          <span>Mute Notifications for this Friend</span>
+          <input id="friendMuteToggle" type="checkbox" />
+        </div>
+        <div style="background:var(--bg-card); padding:10px; border-radius:8px; font-size:0.8rem;">
+          <strong>Mutual Group Servers:</strong>
+          <div id="friendMutualGroups" style="color:var(--muted); margin-top:4px;">None</div>
+        </div>
+        <button id="saveFriendInfoBtn" class="btn-success">Save Friend Details</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Group Member Adder Modal -->
+  <div id="groupMemberModal" class="overlay">
+    <div class="modal-card" style="max-width:420px;">
+      <div class="modal-header">
+        <span>Add Friends to Group</span>
+        <button id="closeGroupMemberModal" class="btn-sec">✕</button>
+      </div>
+      <div id="groupFriendPickerList" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Group Server Settings Modal -->
+  <div id="groupSettingsOverlay" class="overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span id="grpDrawerTitle">SERVER SETTINGS</span>
+        <button id="closeGroupSettingsBtn" class="btn-sec">✕</button>
+      </div>
+      <div class="tabs-row">
+        <button class="grp-tab active" data-gsec="overview">Overview & Welcome</button>
+        <button class="grp-tab" data-gsec="channels">Channels & Voice</button>
+        <button class="grp-tab" data-gsec="roles">Roles & Permissions</button>
+        <button class="grp-tab" data-gsec="boosts">Boosts & Safety</button>
+        <button class="grp-tab" data-gsec="members">Members & Leave</button>
+      </div>
+      <div class="modal-body">
+        <div id="gsec-overview" class="grp-section active">
+          <div class="setting-row"><span>Server Name</span><input id="grpEditName" type="text" /></div>
+          <div class="setting-row"><span>Server Icon Emoji</span><input id="grpEditIcon" type="text" maxlength="4" style="width:70px;" /></div>
+          <div class="setting-row"><span>Slowmode Cooldown (seconds, 0 = off)</span><input id="grpSlowmodeSec" type="number" min="0" max="120" value="0" style="width:90px;" /></div>
+          <div class="setting-row" style="flex-direction:column; align-items:stretch;">
+            <span>Welcome Screen & Rules Message</span>
+            <textarea id="grpWelcomeMsg" rows="3" placeholder="Welcome to the server! Be respectful..."></textarea>
+          </div>
+          <button id="saveGrpProfileBtn" class="btn-success">Save Server Overview</button>
+        </div>
+
+        <div id="gsec-channels" class="grp-section">
+          <div style="display:flex; gap:6px;">
+            <input id="newChannelName" type="text" placeholder="Channel name (e.g. homework)" style="flex:1;" />
+            <select id="newChannelType">
+              <option value="text"># Text Channel</option>
+              <option value="announcement">📢 Announcements (Admin Only)</option>
+              <option value="voice">🔊 Voice Room</option>
+            </select>
+            <button id="addChannelBtn" class="btn-success">+ Create</button>
+          </div>
+          <div id="grpChannelsList"></div>
+        </div>
+
+        <div id="gsec-roles" class="grp-section">
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <input id="newRoleName" type="text" placeholder="Role name (e.g. Moderator)" style="flex:1;" />
+            <input id="newRoleColor" type="color" value="#38bdf8" style="width:44px; height:36px; padding:2px;" />
+            <select id="newRolePerm">
+              <option value="member">Member (Chat)</option>
+              <option value="mod">Mod (Pin & Kick)</option>
+              <option value="admin">Admin (Full Control)</option>
+            </select>
+            <button id="addRoleBtn" class="btn-success">+ Add Role</button>
+          </div>
+          <div id="grpRolesList"></div>
+        </div>
+
+        <div id="gsec-boosts" class="grp-section">
+          <div class="setting-row">
+            <div>
+              <strong id="grpBoostSummaryTitle">Server Level 0 (0 Boosts)</strong>
+              <div id="grpAvailableBoostsText" style="font-size:0.78rem; color:var(--muted);"></div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button id="boostThisGroupBtn" class="btn-success">🚀 +1 Boost</button>
+              <button id="unboostThisGroupBtn" class="btn-sec">-1</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <span>Notification Override</span>
+            <select id="grpNotifOverride">
+              <option value="all">All Messages</option>
+              <option value="mentions">Only @mentions</option>
+              <option value="mute">Muted</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span>AutoMod Blocked Words (comma-separated)</span>
+            <input id="grpAutoModWords" type="text" placeholder="spam, spoiler..." />
+          </div>
+          <button id="saveAutoModBtn" class="btn-success">Save Safety & Notification Rules</button>
+        </div>
+
+        <div id="gsec-members" class="grp-section">
+          <div id="grpMemberManageList"></div>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button id="leaveGroupBtn" class="btn-danger" style="flex:1;">🚪 Leave Group Server</button>
+            <button id="deleteGroupServerBtn" class="btn-danger" style="flex:1;">🗑️ Delete Server (Owner)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- User Settings Modal (Theme Marketplace, Nerd/Dev CSS, Pulse Pro PIN, Birthday) -->
+  <div id="settingsOverlay" class="overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>⚙️ PULSE CHAT SETTINGS</span>
+        <button id="closeSettingsBtn" class="btn-sec">✕</button>
+      </div>
+      <div class="tabs-row">
+        <button class="settings-tab active" data-sec="profile">Profile & Birthday</button>
+        <button class="settings-tab" data-sec="appearance">Theme Marketplace</button>
+        <button class="settings-tab" data-sec="pro">Pulse Pro & PIN Lock</button>
+        <button class="settings-tab" data-sec="voice">Voice & Audio</button>
+        <button class="settings-tab" data-sec="dev">Developer & Custom CSS</button>
+      </div>
+      <div class="modal-body">
+        <div id="sec-profile" class="settings-section active">
+          <div class="setting-row"><span>Display Name</span><input id="setDisplayName" type="text" /></div>
+          <div class="setting-row"><span>Avatar Emoji</span><input id="setAvatarEmoji" type="text" maxlength="4" style="width:70px;" /></div>
+          <div class="setting-row"><span>Custom Status Activity</span><input id="setCustomActivity" type="text" /></div>
+          <div class="setting-row"><span>Guild Tag (4 chars)</span><input id="setEquippedTag" type="text" maxlength="4" style="width:80px;" /></div>
+          <div class="setting-row"><span>Birthday (MM-DD for Cake Badge 🎂)</span><input id="setBirthday" type="text" placeholder="05-14" style="width:90px;" /></div>
+          <div class="setting-row">
+            <span>DM Privacy Filter</span>
+            <select id="setDmFilter">
+              <option value="requests">Message Requests (Default)</option>
+              <option value="friends_only">Friends Only</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="sec-appearance" class="settings-section">
+          <div class="setting-row">
+            <span>Active Theme</span>
+            <select id="themeSelect">
+              <option value="discord-dark">Discord Dark</option>
+              <option value="pro-obsidian">Pro Obsidian Gold</option>
+              <option value="cyber-dark">Cyber Neon Blue</option>
+              <option value="emerald">Emerald Forest</option>
+              <option value="purple">Royal Amethyst</option>
+              <option value="crimson">Crimson Eclipse</option>
+              <option value="sunset">Warm Sunset</option>
+              <option value="matrix">Matrix Hacker</option>
+              <option value="light">Clean Daylight</option>
+            </select>
+          </div>
+          <div style="font-weight:800; font-size:0.85rem; margin-top:4px;">🏪 Community Theme Marketplace (1-Click Install)</div>
+          <div id="themeMarketplaceGrid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px;"></div>
+          <div class="setting-row"><span>Show Send Button</span><input id="setShowSendBtn" type="checkbox" checked /></div>
+          <div class="setting-row"><span>Auto-Convert Emoticons (:), &lt;3)</span><input id="setAutoEmoji" type="checkbox" checked /></div>
+        </div>
+
+        <div id="sec-pro" class="settings-section">
+          <div class="setting-row">
+            <div>
+              <strong id="proStatusDesc">Checking Pulse Pro...</strong>
+              <div id="proRenewalDateText" style="font-size:0.75rem; color:var(--muted);"></div>
+              <div id="userBoostInventoryText" style="font-size:0.75rem; color:#fbbf24;"></div>
+            </div>
+            <span id="proStatusPill" class="pro-badge">FREE</span>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button id="subMonthlyBtn" style="flex:1;">Activate Pro Monthly ($4.99)</button>
+            <button id="subYearlyBtn" class="btn-success" style="flex:1;">Activate Pro Yearly ($49.99)</button>
+          </div>
+          <div class="setting-row">
+            <span>Redeem Gift or Friend Pass Code</span>
+            <div style="display:flex; gap:6px;">
+              <input id="giftCodeInput" type="text" placeholder="PULSE-PRO-..." />
+              <button id="redeemCodeBtn" class="btn-success">Redeem</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div>
+              <strong>🔒 App Lock 4-Digit PIN (Pulse Pro)</strong>
+              <div style="font-size:0.75rem; color:var(--muted);">Require a PIN when opening Workspace</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <input id="setAppPinInput" type="password" maxlength="4" placeholder="1234" style="width:75px;" />
+              <button id="saveAppPinBtn" class="btn-sec">Set PIN</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="sec-voice" class="settings-section">
+          <div class="setting-row"><span>Microphone Device</span><select id="micDeviceSelect"><option value="">Default Microphone</option></select></div>
+          <div class="setting-row"><span>Echo Cancellation</span><input id="setEcho" type="checkbox" checked /></div>
+          <div class="setting-row"><span>Noise Suppression</span><input id="setNoise" type="checkbox" checked /></div>
+          <div class="setting-row"><span>Enable Text-to-Speech (/tts)</span><input id="setAllowTts" type="checkbox" checked /></div>
+        </div>
+
+        <div id="sec-dev" class="settings-section">
+          <div class="setting-row"><span>Enable Developer Mode</span><input id="setDevMode" type="checkbox" /></div>
+          <div class="setting-row"><span>Streamer Mode (Hide Peer Codes)</span><input id="setStreamerMode" type="checkbox" /></div>
+          <div class="setting-row" style="flex-direction:column; align-items:stretch;">
+            <span>🎨 Custom CSS Editor (Requires Developer Mode)</span>
+            <textarea id="customCssInput" rows="5" placeholder="/* Example: .message.sent { background: linear-gradient(45deg, #ec4899, #8b5cf6); } */" style="font-family:monospace;"></textarea>
+            <button id="applyCustomCssBtn" class="btn-success" style="margin-top:6px;">Apply Custom CSS</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
   <!-- Incoming Call Modal -->
-  <div class="modal-overlay" id="callModal">
-    <div class="modal-card">
-      <div style="font-size: 3.5rem;">📹</div>
-      <h2 id="callerNameTitle" style="color: var(--accent);">Incoming Call</h2>
-      <div style="display: flex; gap: 12px; justify-content: center; margin-top: 10px;">
-        <button class="btn-success" id="acceptCallBtn" style="padding: 12px 28px;">Accept</button>
-        <button class="btn-danger" id="declineCallBtn" style="padding: 12px 28px;">Decline</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ========================================================================= -->
-  <!-- FULL GROUP / SERVER SETTINGS OVERLAY (ALL 7 CATEGORIES + BOOSTS)          -->
-  <!-- ========================================================================= -->
-  <div class="settings-overlay" id="groupSettingsOverlay">
-    <div class="settings-nav">
-      <div style="padding:6px 10px; font-weight:800; color:var(--accent);" id="grpDrawerTitle">SERVER SETTINGS</div>
-      <button class="grp-tab active" data-gsec="g-boosts" style="color:#f472b6;">🚀 Server Boosts & Perks</button>
-
-      <div class="settings-cat">Settings</div>
-      <button class="grp-tab" data-gsec="g-profile">🏠 Server Profile</button>
-      <button class="grp-tab" data-gsec="g-roles">🛡️ Roles & Permissions</button>
-      <button class="grp-tab" data-gsec="g-emoji">😀 Emoji & Soundboard</button>
-      <button class="grp-tab" data-gsec="g-widget">🔗 Custom Invite & Widget</button>
-
-      <div class="settings-cat">Moderation & Community</div>
-      <button class="grp-tab" data-gsec="g-safety">🔨 Safety, AutoMod & Audit Log</button>
-      <button class="grp-tab" data-gsec="g-community">🌐 Community & Insights</button>
-
-      <div class="settings-cat">User Management</div>
-      <button class="grp-tab" data-gsec="g-members">👥 Members, Invites & Access</button>
-
-      <div style="flex:1; min-height: 16px;"></div>
-      <button class="btn-danger" id="deleteGroupServerBtn" style="margin-bottom:6px;">🗑️ Delete Server</button>
-      <button class="btn-sec" id="closeGroupSettingsBtn">Close Server Settings</button>
-    </div>
-
-    <div class="settings-content">
-      <!-- 1. SERVER BOOSTS & UNALLOCATED PERKS -->
-      <div class="grp-section active" id="gsec-g-boosts">
-        <h2 style="color:#f472b6;">🚀 Server Boosts & Level Progression</h2>
-        <div class="setting-card" style="border-color:#ec4899;">
-          <div class="setting-row">
-            <div>
-              <strong id="grpBoostSummaryTitle">Server Level 0 (0 Boosts)</strong>
-              <div style="font-size:0.82rem; color:var(--muted);" id="grpAvailableBoostsText">You have 0 available boosts to allocate.</div>
-            </div>
-            <div style="display:flex; gap:6px;">
-              <button class="btn-boost" id="boostThisGroupBtn">🚀 Boost Server (+1)</button>
-              <button class="btn-sec" id="unboostThisGroupBtn">Remove Boost</button>
-            </div>
-          </div>
-          <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-top:6px;">
-            <div class="insight-box"><strong>Level 1 (2 Boosts)</strong><div style="font-size:0.75rem; color:var(--muted);">128kbps Audio • 720p 60fps • 100 Emoji</div></div>
-            <div class="insight-box"><strong>Level 2 (7 Boosts)</strong><div style="font-size:0.75rem; color:var(--muted);">256kbps Audio • 1080p 60fps • 50MB Upload • Banner</div></div>
-            <div class="insight-box"><strong>Level 3 (14 Boosts)</strong><div style="font-size:0.75rem; color:var(--muted);">384kbps Audio • 100MB Upload • Vanity URL</div></div>
-          </div>
-        </div>
-
-        <h3>Additional Perks (Unallocated Boosts)</h3>
-        <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>🏷️ Server Tag / Guild Tag (4-Char Badge)</strong> <span class="boost-tag">3 Boosts</span><div style="font-size:0.78rem; color:var(--muted);">Lets members wear this group's 4-letter badge next to their name</div></div>
-            <input type="checkbox" id="grpPerkTagToggle" />
-          </div>
-          <div class="setting-row">
-            <div><strong>✨ Enhanced Role Styles (Gradient / Holographic)</strong> <span class="boost-tag">3 Boosts</span><div style="font-size:0.78rem; color:var(--muted);">Unlocks animated holographic role name colors</div></div>
-            <input type="checkbox" id="grpPerkHoloToggle" />
-          </div>
-        </div>
-      </div>
-
-      <!-- 2. SERVER PROFILE (OVERVIEW) -->
-      <div class="grp-section" id="gsec-g-profile">
-        <h2>Server Profile</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Server Name</strong></div><input type="text" id="grpEditName" /></div>
-          <div class="setting-row"><div><strong>Server Icon Emoji</strong></div><input type="text" id="grpEditIcon" maxlength="4" style="width:75px;" /></div>
-          <div class="setting-row"><div><strong>4-Character Server Tag</strong> <span class="boost-tag">3 Boosts</span></div><input type="text" id="grpEditTag" maxlength="4" style="width:90px; text-transform:uppercase;" placeholder="PULS" /></div>
-          <div class="setting-row"><div><strong>Server Description</strong></div><input type="text" id="grpEditDesc" placeholder="What is this community about?" style="width:280px;" /></div>
-          <div class="setting-row"><div><strong>Server Banner Color</strong> <span class="boost-tag">Level 2</span></div><input type="color" id="grpEditBanner" value="#5865f2" /></div>
-          <div class="setting-row"><div><strong>Inactive (AFK) Timeout</strong></div><select id="grpInactiveTimeout"><option value="1">1 Minute</option><option value="5" selected>5 Minutes</option><option value="15">15 Minutes</option><option value="30">30 Minutes</option><option value="60">1 Hour</option></select></div>
-          <div class="setting-row"><div><strong>Default Notification Settings</strong></div><select id="grpDefaultNotif"><option value="all">All Messages</option><option value="mentions">Only @mentions</option></select></div>
-          <div class="setting-row"><div><strong>System Welcome & Boost Messages</strong></div><input type="checkbox" id="grpSysWelcome" checked /></div>
-          <div class="setting-row"><div><strong>Show Boost Progress Bar in Header</strong></div><input type="checkbox" id="grpShowBoostBar" checked /></div>
-          <button class="btn-success" id="saveGrpProfileBtn">Save Server Profile</button>
-        </div>
-      </div>
-
-      <!-- 3. ROLES & PERMISSIONS -->
-      <div class="grp-section" id="gsec-g-roles">
-        <h2>Roles & Granular Permissions</h2>
-        <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Create New Role</strong></div>
-            <div style="display:flex; gap:6px;"><input type="text" id="newRoleName" placeholder="Moderator / VIP" /><input type="color" id="newRoleColor" value="#10b981" /><button id="addRoleBtn">+ Create Role</button></div>
-          </div>
-          <div id="grpRolesList" style="display:flex; flex-direction:column; gap:8px;"></div>
-        </div>
-        <div class="setting-card">
-          <strong>@everyone Default Permissions</strong>
-          <div class="setting-row"><span>Send Messages & Create Polls</span><input type="checkbox" id="permSend" checked /></div>
-          <div class="setting-row"><span>Send Text-to-Speech (/tts) Messages</span><input type="checkbox" id="permTts" checked /></div>
-          <div class="setting-row"><span>Use Soundboard & External Emoji</span><input type="checkbox" id="permSound" checked /></div>
-          <div class="setting-row"><span>Create Invites</span><input type="checkbox" id="permInvite" checked /></div>
-          <div class="setting-row"><span>Manage Messages & Kick Members (Mod)</span><input type="checkbox" id="permMod" /></div>
-        </div>
-      </div>
-
-      <!-- 4. EMOJI & SOUNDBOARD -->
-      <div class="grp-section" id="gsec-g-emoji">
-        <h2>Server Emoji & Soundboard</h2>
-        <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Add Custom Group Shortcut Emoji</strong><div style="font-size:0.78rem; color:var(--muted);">Type <code>:code:</code> in this group to auto-insert</div></div>
-            <div style="display:flex; gap:6px;"><input type="text" id="grpEmojiCode" placeholder=":hype:" style="width:95px;" /><input type="text" id="grpEmojiChar" placeholder="🔥" style="width:65px;" /><button id="addGrpEmojiBtn">Add</button></div>
-          </div>
-          <div id="grpEmojiList" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
-        </div>
-      </div>
-
-      <!-- 5. CUSTOM INVITE & WIDGET -->
-      <div class="grp-section" id="gsec-g-widget">
-        <h2>Custom Invite Link, Widget & Template</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Custom Vanity Invite Code</strong> <span class="boost-tag">Level 3</span></div><div style="display:flex; gap:6px;"><input type="text" id="grpVanitySlug" placeholder="pulse.gg/mygroup" /><button id="copyVanityBtn">Copy Link</button></div></div>
-          <div class="setting-row"><div><strong>Enable Server JSON Widget</strong></div><input type="checkbox" id="grpWidgetEnabled" /></div>
-          <div class="setting-row"><div><strong>Export Server Template JSON</strong><div style="font-size:0.78rem; color:var(--muted);">Copies roles, settings, and AutoMod rules</div></div><button class="btn-sec" id="copyServerTemplateBtn">📋 Copy Template</button></div>
-        </div>
-      </div>
-
-      <!-- 6. SAFETY, AUTOMOD & AUDIT LOG -->
-      <div class="grp-section" id="gsec-g-safety">
-        <h2>Moderation, AutoMod & Audit Log</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Verification Level</strong></div><select id="grpVerifyLevel"><option value="none">None (Unrestricted)</option><option value="low">Low (Verified Peer Code)</option><option value="high">High (Member for 10+ mins)</option></select></div>
-          <div class="setting-row"><div><strong>Require Rules Screening Agreement</strong></div><input type="checkbox" id="grpRulesScreen" /></div>
-          <div class="setting-row"><div><strong>AutoMod Keyword Blocklist (comma-separated)</strong></div><input type="text" id="grpAutoModWords" placeholder="spam, badword, raid" style="width:250px;" /></div>
-          <div class="setting-row"><div><strong>Mention Spam Limit (Max @mentions per msg)</strong></div><input type="number" id="grpMentionLimit" min="1" max="50" value="5" style="width:75px;" /></div>
-          <button class="btn-success" id="saveAutoModBtn">Save Safety Rules</button>
-        </div>
-        <h3>📜 Audit Log</h3>
-        <div class="setting-card" id="grpAuditLogBox" style="max-height:180px; overflow-y:auto; font-size:0.8rem; color:var(--muted);"></div>
-      </div>
-
-      <!-- 7. COMMUNITY & SERVER INSIGHTS -->
-      <div class="grp-section" id="gsec-g-community">
-        <h2>Community & Server Insights</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Enable Community Features & Discovery</strong></div><input type="checkbox" id="grpCommunityEnabled" /></div>
-          <div class="setting-row"><div><strong>Server Welcome Banner & Rules Text</strong></div><input type="text" id="grpRulesText" placeholder="Be respectful and have fun!" style="width:260px;" /></div>
-        </div>
-        <h3>📊 Server Insights Dashboard</h3>
-        <div class="insight-grid">
-          <div class="insight-box"><h2 id="insMemberCount" style="color:var(--accent);">0</h2><div style="font-size:0.78rem; color:var(--muted);">Total Members</div></div>
-          <div class="insight-box"><h2 id="insMsgCount" style="color:#10b981;">0</h2><div style="font-size:0.78rem; color:var(--muted);">Messages Sent</div></div>
-          <div class="insight-box"><h2 id="insBoostCount" style="color:#f472b6;">0</h2><div style="font-size:0.78rem; color:var(--muted);">Active Boosts</div></div>
-        </div>
-      </div>
-
-      <!-- 8. USER MANAGEMENT (MEMBERS, INVITES & BANS) -->
-      <div class="grp-section" id="gsec-g-members">
-        <h2>User Management: Members, Invites & Bans</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Server Access Mode</strong></div><select id="grpAccessMode"><option value="invite">Invite Only</option><option value="open">Open Join</option></select></div>
-          <div class="setting-row"><div><strong>Active Group Join Code</strong></div><div style="display:flex; gap:6px;"><code id="grpJoinCodeDisplay" style="padding:6px 10px; background:var(--bg-card); border-radius:8px;">GRP-0000</code><button id="copyGrpJoinCodeBtn">Copy Invite</button></div></div>
-        </div>
-        <h3>Member Directory (Kick / Ban / Timeout)</h3>
-        <div class="setting-card" id="grpMemberManageList"></div>
-        <h3>Banned Users</h3>
-        <div class="setting-card" id="grpBannedList"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ========================================================================= -->
-  <!-- FULL USER SETTINGS OVERLAY (SUBSCRIPTION PULSE PRO + ALL 15 SECTIONS)     -->
-  <!-- ========================================================================= -->
-  <div class="settings-overlay" id="settingsOverlay">
-    <div class="settings-nav">
-      <div class="settings-cat">Pulse Pro Subscription</div>
-      <button class="settings-tab active" data-sec="pro" style="color:#fbbf24;">⭐ Pulse Pro & Boosts</button>
-
-      <div class="settings-cat">User Settings</div>
-      <button class="settings-tab" data-sec="account">👤 My Account & Standing</button>
-      <button class="settings-tab" data-sec="profiles">🪪 Profiles & Guild Tag</button>
-      <button class="settings-tab" data-sec="social">🛡️ Content & Social</button>
-      <button class="settings-tab" data-sec="privacy">🔒 Data & Privacy</button>
-      <button class="settings-tab" data-sec="connections">🔗 Connections</button>
-
-      <div class="settings-cat">App Settings</div>
-      <button class="settings-tab" data-sec="appearance">🎨 Appearance</button>
-      <button class="settings-tab" data-sec="accessibility">♿ Accessibility & TTS</button>
-      <button class="settings-tab" data-sec="voice">🎙️ Voice, Video & Soundboard</button>
-      <button class="settings-tab" data-sec="chat">💬 Chat & Spoilers</button>
-      <button class="settings-tab" data-sec="notifications">🔔 Notifications</button>
-      <button class="settings-tab" data-sec="keybinds">⌨️ Keybinds</button>
-      <button class="settings-tab" data-sec="streamer">🎥 Streamer Mode & Language</button>
-      <button class="settings-tab" data-sec="advanced">🛠️ Advanced & Performance</button>
-
-      <div class="settings-cat">Utilities</div>
-      <button class="settings-tab" data-sec="utilities">✨ HypeSquad & What's New</button>
-
-      <div style="flex:1; min-height: 16px;"></div>
-      <button class="btn-danger" id="closeSettingsBtn">Close Settings</button>
-    </div>
-
-    <div class="settings-content">
-      <!-- 1. PULSE PRO SUBSCRIPTION & INCLUDED BOOSTS -->
-      <div class="settings-section active" id="sec-pro">
-        <h2 style="color:#fbbf24;">⭐ Pulse Pro Subscription & Boosts</h2>
-        <div class="setting-card" style="border-color:#eab308;">
-          <div class="setting-row">
-            <div>
-              <strong>Current Subscription</strong>
-              <div style="font-size:0.82rem; color:var(--muted);" id="proStatusDesc">Checking status...</div>
-              <div style="font-size:0.78rem; color:#f472b6; margin-top:2px;" id="proRenewalDateText"></div>
-            </div>
-            <span class="pro-badge" id="proStatusPill" style="font-size:0.85rem; padding:4px 10px;">CHECKING</span>
-          </div>
-
-          <div class="plan-grid">
-            <div class="plan-card" id="planMonthlyCard">
-              <div style="display:flex; justify-content:space-between;"><strong>Pulse Pro Monthly</strong><span style="color:#fbbf24; font-weight:800;">$0.00 / mo</span></div>
-              <div style="font-size:0.78rem; color:var(--muted);">• Includes <strong>2 Free Group Boosts</strong><br>• 1080p 60fps Screen Share & 30-min quota<br>• Custom Typing Indicator & Profile Themes</div>
-              <button id="subMonthlyBtn" style="background:#eab308; color:#000; margin-top:4px;">Subscribe Monthly</button>
-            </div>
-            <div class="plan-card" id="planYearlyCard">
-              <div style="display:flex; justify-content:space-between;"><strong>Pulse Pro Yearly</strong><span style="color:#10b981; font-weight:800;">$0.00 / yr (Save 20%)</span></div>
-              <div style="font-size:0.78rem; color:var(--muted);">• Includes <strong>2 Free Group Boosts</strong><br>• All Pro perks + Yearly Supporter Badge<br>• Instant renewal management</div>
-              <button id="subYearlyBtn" style="background:linear-gradient(90deg, #f59e0b, #ec4899); color:#fff; margin-top:4px;">Subscribe Yearly</button>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <div><strong>Redeem Gift Card or Friend Pass Code</strong><div style="font-size:0.8rem; color:var(--muted);">Activate lifetime Pulse Pro or a 3-Day Friend Pass</div></div>
-            <div style="display:flex; gap:6px;"><input type="text" id="giftCodeInput" placeholder="PULSE-PRO-XXXX-XXXX" style="width:195px; text-transform:uppercase;" /><button id="redeemCodeBtn" style="background:#eab308; color:#000;">Redeem</button></div>
-          </div>
-          <div class="setting-row" id="cancelSubRow" style="display:none;">
-            <div><strong>Manage Subscription</strong><div style="font-size:0.78rem; color:var(--muted);">Cancel auto-renewal at any time</div></div>
-            <button class="btn-danger" id="cancelSubBtn">Cancel Subscription</button>
-          </div>
-        </div>
-
-        <div class="setting-card">
-          <div class="pro-lock-screen pro-gate"><h4>🔒 Pulse Pro Exclusive</h4><p>Friend Passes, 2 Included Group Boosts, and Custom Typing Indicators require an active Pulse Pro subscription.</p></div>
-          <div class="setting-row">
-            <div><strong>Included Group Boost Inventory</strong><div style="font-size:0.8rem; color:var(--muted);" id="userBoostInventoryText">2 / 2 Boosts Available</div></div>
-            <span class="boost-tag">2 BOOSTS INCLUDED</span>
-          </div>
-          <div class="setting-row">
-            <div><strong>Generate Pulse Pro Friend Pass</strong><div style="font-size:0.8rem; color:var(--muted);">Share a 3-day trial pass code with a friend</div></div>
-            <button id="genFriendPassBtn" style="background:#eab308; color:#000;">🎟️ Generate Pass</button>
-          </div>
-          <div class="setting-row">
-            <div><strong>Custom Typing Indicator Text</strong> <span class="pro-tag">Pulse Pro</span></div>
-            <input type="text" id="setCustomTyping" placeholder="is cooking up a message..." style="width:220px;" />
-          </div>
-        </div>
-      </div>
-
-      <!-- 2. MY ACCOUNT & STANDING -->
-      <div class="settings-section" id="sec-account">
-        <h2>My Account & Standing</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Account Standing</strong><div style="font-size:0.8rem; color:#10b981;">✅ All Good — Your account has 0 active violations.</div></div><span>Good Standing</span></div>
-          <div class="setting-row"><div><strong>Display Name</strong></div><input type="text" id="setDisplayName" /></div>
-          <div class="setting-row"><div><strong>Username Handle</strong></div><input type="text" id="setUsername" placeholder="@pulseuser" /></div>
-          <div class="setting-row"><div><strong>Custom Activity Status</strong></div><input type="text" id="setCustomActivity" placeholder="Online on Pulse..." /></div>
-          <div class="setting-row"><div><strong>Recover 4-Digit Peer Code</strong></div><div style="display:flex; gap:6px;"><input type="text" id="recoverCodeInput" maxlength="4" style="width:85px; text-transform:uppercase;" /><button id="applyRecoverCodeBtn">Restore</button></div></div>
-          <div class="setting-row"><div><strong>Reset / Log Out Local Session</strong><div style="font-size:0.8rem; color:var(--muted);">Clears local session cache</div></div><button class="btn-danger" id="logoutSessionBtn">Log Out</button></div>
-        </div>
-      </div>
-
-      <!-- 3. PROFILES & GUILD TAG -->
-      <div class="settings-section" id="sec-profiles">
-        <h2>Profiles & Server Tag</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Avatar Icon / Emoji</strong></div><input type="text" id="setAvatarEmoji" maxlength="4" style="width:75px;" placeholder="😎" /></div>
-          <div class="setting-row"><div><strong>Equipped Server / Guild Tag (4-Char)</strong><div style="font-size:0.78rem; color:var(--muted);">Shown next to your username in chat</div></div><input type="text" id="setEquippedTag" maxlength="4" style="width:90px; text-transform:uppercase;" placeholder="PULS" /></div>
-          <div class="setting-row"><div><strong>Pronouns</strong></div><input type="text" id="setPronouns" placeholder="they/them, he/him, she/her" /></div>
-          <div class="setting-row"><div><strong>About Me (Bio)</strong></div><input type="text" id="setBio" placeholder="Tell friends about yourself..." style="width:260px;" /></div>
-          <div class="setting-row"><div><strong>Solid Banner Color</strong></div><input type="color" id="setBannerColor" value="#5865f2" /></div>
-        </div>
-        <div class="setting-card">
-          <div class="pro-lock-screen pro-gate"><h4>🔒 Pulse Pro Profile Styling</h4><p>Display Name Styles, Animated Avatar Borders, and Custom Profile Theme Gradients require Pulse Pro.</p></div>
-          <div class="setting-row"><div><strong>Display Name Style</strong> <span class="pro-tag">Pulse Pro</span></div><select id="setNameStyle"><option value="normal">Standard</option><option value="neon">Neon Glow</option><option value="gold">Royal Gold</option></select></div>
-          <div class="setting-row"><div><strong>Avatar Decoration Ring</strong> <span class="pro-tag">Pulse Pro</span></div><select id="setAvatarDeco"><option value="none">None</option><option value="cyber">Cyber Ring</option><option value="flame">Flame Aura</option></select></div>
-          <div class="setting-row"><div><strong>Profile Theme Accent</strong> <span class="pro-tag">Pulse Pro</span></div><input type="color" id="setProfileAccent" value="#ec4899" /></div>
-        </div>
-      </div>
-
-      <!-- 4. CONTENT & SOCIAL -->
-      <div class="settings-section" id="sec-social">
-        <h2>Content & Social (Privacy & Safety)</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Direct Message Filter</strong></div><select id="setDmFilter"><option value="requests">Filter Unknown Users to Requests</option><option value="friends_only">Friends Only (Block Unknown)</option><option value="everyone">Allow All DMs</option></select></div>
-          <div class="setting-row"><div><strong>Sensitive Media Content Filter</strong></div><select id="setSensitiveFilter"><option value="blur">Blur Potentially Sensitive Media</option><option value="show">Show All Media</option><option value="block">Block Sensitive Media</option></select></div>
-          <div class="setting-row"><div><strong>Who Can Send Friend Requests</strong></div><select id="setFriendReqPerm"><option value="everyone">Everyone with My Code</option><option value="group_members">Group Members Only</option></select></div>
-          <div class="setting-row"><div><strong>Blocked Users</strong><div style="font-size:0.8rem; color:var(--muted);" id="blockedUsersListText">No blocked users</div></div><button class="btn-sec" id="clearBlockedBtn">Unblock All</button></div>
-        </div>
-      </div>
-
-      <!-- 5. DATA & PRIVACY -->
-      <div class="settings-section" id="sec-privacy">
-        <h2>Data & Privacy</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Use local telemetry to improve Pulse UI</strong></div><input type="checkbox" id="setDataImprove" checked /></div>
-          <div class="setting-row"><div><strong>Customize experience based on active themes</strong></div><input type="checkbox" id="setDataCustom" checked /></div>
-          <div class="setting-row"><div><strong>Request All of My Data (Data Package)</strong><div style="font-size:0.8rem; color:var(--muted);">Download a complete JSON export of your chats, friends, and settings</div></div><button id="exportDataPackageBtn">📦 Download Data Package</button></div>
-        </div>
-      </div>
-
-      <!-- 6. CONNECTIONS -->
-      <div class="settings-section" id="sec-connections">
-        <h2>Connections (Profile Badges)</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>GitHub Username</strong></div><input type="text" id="connGithub" placeholder="iliketrains1382" /></div>
-          <div class="setting-row"><div><strong>YouTube Channel</strong></div><input type="text" id="connYoutube" placeholder="@channel" /></div>
-          <div class="setting-row"><div><strong>Twitch Handle</strong></div><input type="text" id="connTwitch" placeholder="username" /></div>
-          <div class="setting-row"><div><strong>Steam / Roblox / Spotify ID</strong></div><input type="text" id="connGaming" placeholder="GamerTag" /></div>
-          <div class="setting-row"><div><strong>Display Connections on Profile</strong></div><input type="checkbox" id="setShowConnections" checked /></div>
-        </div>
-      </div>
-
-      <!-- 7. APPEARANCE (ALL 9 THEMES PRESERVED) -->
-      <div class="settings-section" id="sec-appearance">
-        <h2>Appearance</h2>
-        <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Color Theme (All 9 Themes)</strong></div>
-            <select id="themeSelect">
-              <option value="discord-dark">Discord Dark</option>
-              <option value="cyber-dark">Cyber Neon</option>
-              <option value="light">Clean Light</option>
-              <option value="emerald">Emerald Forest</option>
-              <option value="purple">Obsidian Purple</option>
-              <option value="crimson">Crimson Red</option>
-              <option value="sunset">Amber Sunset</option>
-              <option value="matrix">Secret Matrix Mode</option>
-              <option value="pro-obsidian">Gold Obsidian (Pulse Pro)</option>
-            </select>
-          </div>
-          <div class="setting-row"><div><strong>Message Display Density</strong></div><select id="setMsgDensity"><option value="cozy">Cozy (Modern Bubbles)</option><option value="compact">Compact (IRC / Tight List)</option></select></div>
-          <div class="setting-row"><div><strong>Font Family</strong></div><select id="setFontFamily"><option value="system-ui">System Sans</option><option value="monospace">Developer Monospace</option><option value="Georgia, serif">Classic Serif</option></select></div>
-          <div class="setting-row"><div><strong>Chat Font Scaling</strong></div><select id="setFontSize"><option value="13px">13px (Small)</option><option value="15px" selected>15px (Normal)</option><option value="17px">17px (Large)</option><option value="19px">19px (Extra Large)</option></select></div>
-          <div class="setting-row"><div><strong>Space Between Message Groups</strong></div><select id="setMsgGap"><option value="6px">Tight (6px)</option><option value="10px" selected>Normal (10px)</option><option value="18px">Spacious (18px)</option></select></div>
-        </div>
-      </div>
-
-      <!-- 8. ACCESSIBILITY & TTS -->
-      <div class="settings-section" id="sec-accessibility">
-        <h2>Accessibility & Text-to-Speech</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Color Saturation (%)</strong></div><input type="range" id="setSaturation" min="50" max="150" value="100" /></div>
-          <div class="setting-row"><div><strong>High Contrast Mode</strong></div><input type="checkbox" id="setHighContrast" /></div>
-          <div class="setting-row"><div><strong>Reduced Motion (Disable Animations)</strong></div><input type="checkbox" id="setNoAnimations" /></div>
-          <div class="setting-row"><div><strong>Show Send Message Button</strong></div><input type="checkbox" id="setShowSendBtn" checked /></div>
-          <div class="setting-row"><div><strong>Allow /tts Text-to-Speech Playback</strong></div><input type="checkbox" id="setAllowTts" checked /></div>
-          <div class="setting-row"><div><strong>TTS Speech Rate & Preview</strong></div><div style="display:flex; gap:8px; align-items:center;"><input type="range" id="setTtsRate" min="0.5" max="2.0" step="0.1" value="1.0" /><button class="btn-sec" id="previewTtsBtn">🔊 Preview TTS</button></div></div>
-        </div>
-      </div>
-
-      <!-- 9. VOICE, VIDEO & SOUNDBOARD -->
-      <div class="settings-section" id="sec-voice">
-        <h2>Voice, Video & Soundboard</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Microphone Input Device</strong></div><select id="micDeviceSelect"><option value="">Default Microphone</option></select></div>
-          <div class="setting-row"><div><strong>Test Microphone Live</strong><div style="font-size:0.8rem; color:var(--muted);" id="micTestStatus">Click test to verify mic</div></div><button id="testMicBtn">🎙️ Test Mic</button></div>
-          <div class="setting-row"><div><strong>Echo Cancellation</strong></div><input type="checkbox" id="setEcho" checked /></div>
-          <div class="setting-row"><div><strong>Noise Suppression</strong></div><input type="checkbox" id="setNoise" checked /></div>
-          <div class="setting-row"><div><strong>Auto Gain Control</strong></div><input type="checkbox" id="setAgc" checked /></div>
-          <div class="setting-row"><div><strong>Screen Share Resolution</strong> <span class="pro-tag">1080p 60fps = Pro</span></div><select id="setScreenRes"><option value="720p">720p 30fps (Standard)</option><option value="1080p">1080p 60fps HD (Pulse Pro)</option></select></div>
-        </div>
-        <h3>Custom Soundboard Slots (3 Free / 5 Pulse Pro)</h3>
-        <div class="setting-card" id="soundboardSlotsContainer"></div>
-      </div>
-
-      <!-- 10. CHAT & SPOILERS -->
-      <div class="settings-section" id="sec-chat">
-        <h2>Chat & Spoilers</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Show Emoji Reactions on Messages</strong></div><input type="checkbox" id="setShowReactions" checked /></div>
-          <div class="setting-row"><div><strong>Automatically Convert Emoticons (e.g. :) → 😊)</strong></div><input type="checkbox" id="setAutoEmoji" checked /></div>
-          <div class="setting-row"><div><strong>Show Embeds & Link Previews</strong></div><input type="checkbox" id="setLinkPreviews" checked /></div>
-          <div class="setting-row"><div><strong>Spoiler Content Behavior (||text||)</strong></div><select id="setSpoilerMode"><option value="click">Reveal On Click</option><option value="always">Always Show Spoilers</option></select></div>
-        </div>
-      </div>
-
-      <!-- 11. NOTIFICATIONS -->
-      <div class="settings-section" id="sec-notifications">
-        <h2>Notifications & Sounds</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Enable Desktop Notifications</strong></div><input type="checkbox" id="setDesktopNotif" checked /></div>
-          <div class="setting-row"><div><strong>Master Sound Effects</strong></div><input type="checkbox" id="setMasterSound" checked /></div>
-          <div class="setting-row"><div><strong>Notification Volume</strong></div><input type="range" id="setNotifVol" min="0" max="1" step="0.1" value="1.0" /></div>
-          <div class="setting-row"><div><strong>Text-to-Speech Notifications</strong></div><select id="setTtsNotifMode"><option value="never">Never</option><option value="current">For Current Selected Chat</option><option value="all">For All Chats</option></select></div>
-        </div>
-      </div>
-
-      <!-- 12. KEYBINDS -->
-      <div class="settings-section" id="sec-keybinds">
-        <h2>Custom Keybinds</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Toggle Mute Microphone Shortcut</strong></div><button class="btn-sec" id="bindMuteKeyBtn">Key: M</button></div>
-          <div class="setting-row"><div><strong>Quick Focus Message Box</strong></div><button class="btn-sec" id="bindFocusKeyBtn">Key: /</button></div>
-        </div>
-      </div>
-
-      <!-- 13. STREAMER MODE & LANGUAGE -->
-      <div class="settings-section" id="sec-streamer">
-        <h2>Streamer Mode & Language</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Enable Streamer Mode</strong><div style="font-size:0.8rem; color:var(--muted);">Hides your 4-digit Peer Code and personal info on screen</div></div><input type="checkbox" id="setStreamerMode" /></div>
-          <div class="setting-row"><div><strong>Interface Language</strong></div><select id="setLanguage"><option value="en">English (US/AU/UK)</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="ja">日本語</option></select></div>
-        </div>
-      </div>
-
-      <!-- 14. ADVANCED & PERFORMANCE -->
-      <div class="settings-section" id="sec-advanced">
-        <h2>Advanced & Turbo Performance</h2>
-        <div class="setting-card">
-          <div class="setting-row"><div><strong>Developer Mode</strong><div style="font-size:0.8rem; color:var(--muted);">Adds Copy Message ID and Copy User Code actions</div></div><input type="checkbox" id="setDevMode" /></div>
-          <div class="setting-row"><div><strong>Message Render Window Limit</strong></div><select id="setRenderLimit"><option value="50">Last 50 Messages</option><option value="150" selected>Last 150 Messages</option><option value="500">Last 500 Messages</option></select></div>
-          <div class="setting-row"><div><strong>Archive Old Chats & Sync Cloud</strong></div><button id="runArchiveNowBtn">☁️ Archive Now</button></div>
-        </div>
-      </div>
-
-      <!-- 15. UTILITIES: HYPESQUAD & WHAT'S NEW -->
-      <div class="settings-section" id="sec-utilities">
-        <h2>HypeSquad & What's New</h2>
-        <div class="setting-card">
-          <div class="setting-row">
-            <div><strong>Join a HypeSquad House</strong><div style="font-size:0.8rem; color:var(--muted);">Displays your House badge next to your name</div></div>
-            <div style="display:flex; gap:6px;">
-              <button class="btn-sec" data-hype="⚔️ Bravery">⚔️ Bravery</button>
-              <button class="btn-sec" data-hype="💡 Brilliance">💡 Brilliance</button>
-              <button class="btn-sec" data-hype="⚖️ Balance">⚖️ Balance</button>
-              <button class="btn-danger" data-hype="">Leave</button>
-            </div>
-          </div>
-        </div>
-        <div class="setting-card">
-          <strong>🚀 What's New in Pulse Chat v11.0</strong>
-          <ul style="font-size:0.84rem; color:var(--muted); padding-left:18px; display:flex; flex-direction:column; gap:6px;">
-            <li><strong>Pulse Pro Subscription Plans:</strong> Monthly & Yearly subscription tiers with renewal tracking and <strong>2 included Group Boosts</strong>.</li>
-            <li><strong>Group Boosts & Level Progression:</strong> Boost any group toward Level 1 (2 Boosts), Level 2 (7 Boosts), and Level 3 (14 Boosts) to unlock 4-character Guild Tags, Holographic Roles, and HD Audio/Uploads.</li>
-            <li><strong>Full Server Admin Drawer:</strong> Added Roles, Custom Group Emojis, AutoMod Keyword Rules, Audit Log, Server Insights, and Member Kick/Ban/Timeout tools.</li>
-            <li><strong>v9.1 Backward Compatibility:</strong> Instant message delivery to friends still running Pulse Chat v9.1.</li>
-          </ul>
+  <div id="callModal" class="overlay">
+    <div class="modal-card" style="max-width:360px; text-align:center;">
+      <div class="modal-header"><span id="callerNameTitle">Incoming Call</span></div>
+      <div class="modal-body">
+        <p style="color:var(--muted);">Someone is calling you over Pulse P2P...</p>
+        <div style="display:flex; gap:10px;">
+          <button id="acceptCallBtn" class="btn-success" style="flex:1;">📞 Answer</button>
+          <button id="declineCallBtn" class="btn-danger" style="flex:1;">✕ Decline</button>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- Keyboard Shortcuts & What's New Modal -->
+  <div id="infoListModal" class="overlay">
+    <div class="modal-card" style="max-width:480px;">
+      <div class="modal-header">
+        <span id="infoListTitle">Info</span>
+        <button id="closeInfoListModal" class="btn-sec">✕</button>
+      </div>
+      <div id="infoListBody" class="modal-body" style="font-size:0.84rem; line-height:1.5;"></div>
+    </div>
+  </div>
+
+  <!-- App Lock PIN Screen -->
+  <div id="pinLockOverlay">
+    <div style="background:var(--bg-sidebar); padding:28px; border-radius:14px; text-align:center; width:300px; border:1px solid var(--border);">
+      <div style="font-size:2rem; margin-bottom:8px;">🔒</div>
+      <strong>Pulse Chat Locked</strong>
+      <p style="font-size:0.78rem; color:var(--muted); margin:6px 0 14px;">Enter your 4-digit Pulse Pro PIN</p>
+      <input id="unlockPinInput" type="password" maxlength="4" placeholder="••••" style="text-align:center; font-size:1.3rem; letter-spacing:8px; width:100%; margin-bottom:10px;" />
+      <button id="unlockPinBtn" class="btn-success" style="width:100%;">Unlock Workspace</button>
+    </div>
+  </div>
+
+  <!-- Panic Boss Key Overlay (Double-press Esc) -->
+  <div id="panicOverlay">
+    <div style="max-width:760px; margin:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #e5e7eb; padding-bottom:12px; margin-bottom:20px;">
+        <h2>Biology & Cellular Respiration — Study Notes</h2>
+        <button onclick="document.getElementById('panicOverlay').style.display='none'" style="background:#e5e7eb; color:#111;">Return</button>
+      </div>
+      <p style="margin-bottom:14px;"><strong>1. Glycolysis (Cytoplasm):</strong> Glucose (6-carbon) is split into two molecules of pyruvate (3-carbon), yielding a net gain of 2 ATP and 2 NADH molecules without requiring oxygen.</p>
+      <p style="margin-bottom:14px;"><strong>2. Citric Acid Cycle (Mitochondrial Matrix):</strong> Pyruvate is oxidized into Acetyl-CoA, releasing CO₂ and generating NADH, FADH₂, and 2 ATP per glucose molecule.</p>
+      <p><strong>3. Oxidative Phosphorylation (Inner Mitochondrial Membrane):</strong> Electrons travel down the electron transport chain, creating a proton gradient that drives ATP synthase to produce ~28–32 ATP.</p>
+    </div>
+  </div>
+
+  <script src="peerjs.min.js"></script>
   <script src="app.js"></script>
-  <script>
-    (function () {
-      const wsBtn = document.getElementById('openWorkspaceBtn');
-      if (!wsBtn) return;
-      if (window === window.top && window.innerWidth > 650) {
-        wsBtn.style.display = 'none';
-      }
-      wsBtn.addEventListener('click', () => {
-        const extId = new URLSearchParams(window.location.search).get('extId') || localStorage.getItem('pulse_ext_id');
-        if (window.location.protocol === 'chrome-extension:' && chrome?.runtime?.sendMessage) {
-          chrome.runtime.sendMessage({ type: 'OPEN_WORKSPACE' });
-        } else if (extId && chrome?.runtime?.sendMessage) {
-          try {
-            chrome.runtime.sendMessage(extId, { type: 'OPEN_WORKSPACE' }, () => {
-              if (chrome.runtime.lastError) window.open(window.location.href, '_blank');
-            });
-          } catch (e) {
-            window.open(window.location.href, '_blank');
-          }
-        } else {
-          window.open(window.location.href, '_blank');
-        }
-      });
-    })();
-  </script>
 </body>
 </html>

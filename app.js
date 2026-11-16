@@ -1,23 +1,38 @@
+const APP_VERSION = '12.0';
 const IS_POPUP = !!document.getElementById('friendsList') && !document.getElementById('railFriends');
 const IS_WEB_HOSTED = window.location.protocol.startsWith('http');
 const URL_PARAMS = new URLSearchParams(window.location.search);
 const EXT_ID = URL_PARAMS.get('extId') || localStorage.getItem('pulse_ext_id') || '';
 if (URL_PARAMS.get('extId')) localStorage.setItem('pulse_ext_id', URL_PARAMS.get('extId'));
 
-const syncChannel = new BroadcastChannel('pulse_chat_v11_sync');
+const syncChannel = new BroadcastChannel('pulse_chat_v12_sync');
 
 let peer = null;
 let myCode = '';
 let activeTarget = null;
+let activeChannelId = 'general';
+let splitTarget = null;
 let liveConns = {};
 let connectingLocks = {};
+let peerPresence = {};
 let currentCall = null;
 let localStream = null;
+let screenStream = null;
+let screenShareTimer = null;
+let callDurationTimer = null;
+let callSeconds = 0;
+let nerdStatsTimer = null;
 let typingTimeout = null;
 let isMuted = false;
 let renderTimer = null;
 let lastRenderSignature = '';
 let logoClickCount = 0;
+let replyingToMsg = null;
+let lastMessageSentAt = 0;
+let idleTimer = null;
+let wasAutoIdled = false;
+let escLastPressed = 0;
+let currentCamIndex = 0;
 
 const VALID_GIFT_CODES = [
   'PULSE-PRO-9X4K-2026',
@@ -29,8 +44,26 @@ const VALID_GIFT_CODES = [
 
 const BANNED_PHRASES = ['67', '6-7', '6 7'];
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-let screenShareTimer = null;
-let screenStream = null;
+
+const MARKETPLACE_THEMES = [
+  { id: 'cyber-dark', name: 'Cyber Neon Blue', author: 'PulseTeam', desc: 'Electric cyan accents on deep midnight slate' },
+  { id: 'pro-obsidian', name: 'Obsidian Gold', author: 'VIP', desc: 'Pitch-black OLED theme with 24k gold highlights' },
+  { id: 'emerald', name: 'Emerald Matrix', author: 'NatureDev', desc: 'Soothing deep forest green palette' },
+  { id: 'purple', name: 'Royal Amethyst', author: 'Nebula', desc: 'Vibrant ultraviolet and plum workspace' },
+  { id: 'crimson', name: 'Crimson Eclipse', author: 'RedShift', desc: 'High-energy ruby red dark theme' },
+  { id: 'sunset', name: 'Solar Sunset', author: 'Horizon', desc: 'Warm amber and espresso tones' }
+];
+
+const EMOJI_LIST = ['😀','😂','🤣','😎','🥳','😍','🤔','😭','😡','🔥','❤️','💯','👍','👎','👏','🙌','🚀','⚡','🎮','🎧','📚','✅','❌','👀','💀','🤡','👑','🎂','🎉','🍕'];
+
+const SLASH_COMMANDS = [
+  { cmd: '/tts ', desc: 'Read message aloud via Text-to-Speech' },
+  { cmd: '/rps ', desc: 'Play Rock-Paper-Scissors (/rps rock|paper|scissors)' },
+  { cmd: '/poll ', desc: 'Create a quick poll (/poll Question | Opt1 | Opt2)' },
+  { cmd: '/party', desc: 'Cycle party rainbow themes' },
+  { cmd: '/flip', desc: 'Flip the screen upside down' },
+  { cmd: '/matrix', desc: 'Activate Matrix Hacker theme' }
+];
 
 const getAssetUrl = (file) => (!IS_WEB_HOSTED && chrome?.runtime?.getURL) ? chrome.runtime.getURL(file) : file;
 const chimeAudio = new Audio(getAssetUrl('chime.mp3'));
@@ -89,7 +122,6 @@ function archiveOldHistory(manual = false) {
     const history = res.pulse_history || {};
     const archive = res.pulse_archive || [];
     let archivedCount = 0;
-
     Object.keys(history).forEach(chatId => {
       if (history[chatId].length > 100) {
         const overflow = history[chatId].splice(0, history[chatId].length - 100);
@@ -97,9 +129,8 @@ function archiveOldHistory(manual = false) {
         archivedCount += overflow.length;
       }
     });
-
     setState({ pulse_history: history, pulse_archive: archive }, () => {
-      if (manual) alert(`☁️ Cloud Sync Complete! Archived ${archivedCount} older messages safely.`);
+      if (manual) alert(`☁️ Archived ${archivedCount} older messages safely.`);
       scheduleRefresh(true);
     });
   });
@@ -107,69 +138,38 @@ function archiveOldHistory(manual = false) {
 
 function removeFriendAndRecords(targetCode, alsoBlock = false) {
   const code = targetCode.trim().toUpperCase();
-  getState(['pulse_friends', 'pulse_history', 'pulse_requests', 'pulse_outbox', 'pulse_pending_inbox', 'pulse_blocked'], (res) => {
+  getState(['pulse_friends', 'pulse_history', 'pulse_requests', 'pulse_outbox', 'pulse_blocked'], (res) => {
     const friends = (res.pulse_friends || []).filter(f => f.code !== code);
     const requests = (res.pulse_requests || []).filter(r => r.code !== code);
     const outbox = (res.pulse_outbox || []).filter(o => o.targetCode !== code);
-    const pending = (res.pulse_pending_inbox || []).filter(p => p.senderCode !== code);
     const blocked = res.pulse_blocked || [];
     const history = res.pulse_history || {};
     delete history[code];
-
     if (alsoBlock && !blocked.includes(code)) blocked.push(code);
-
     if (liveConns[code]) {
       try { liveConns[code].close(); } catch (e) {}
       delete liveConns[code];
     }
-
     if (activeTarget && activeTarget.id === code) activeTarget = null;
-
-    setState({
-      pulse_friends: friends,
-      pulse_history: history,
-      pulse_requests: requests,
-      pulse_outbox: outbox,
-      pulse_pending_inbox: pending,
-      pulse_blocked: blocked
-    }, () => scheduleRefresh(true));
+    setState({ pulse_friends: friends, pulse_history: history, pulse_requests: requests, pulse_outbox: outbox, pulse_blocked: blocked }, () => scheduleRefresh(true));
   });
 }
 
-// --- Pulse Pro Subscription & Included Boosts ---
+// --- Pulse Pro & PIN Lock ---
 function checkProAccess(cb) {
   getState(['pulse_pro_permanent', 'pulse_pro_sub', 'pulse_trial_start', 'pulse_boost_allocations'], (res) => {
     const allocations = res.pulse_boost_allocations || {};
     const usedBoosts = Object.values(allocations).reduce((a, b) => a + b, 0);
 
     if (res.pulse_pro_permanent) {
-      cb({
-        hasPro: true,
-        plan: 'Lifetime Gift Pro',
-        statusText: 'Pulse Pro Active (Lifetime Gift Code)',
-        renewalText: 'Never expires • 2 Group Boosts included',
-        isTrial: false,
-        totalBoosts: 2,
-        availableBoosts: Math.max(0, 2 - usedBoosts)
-      });
+      cb({ hasPro: true, plan: 'Lifetime', statusText: 'Pulse Pro Active (Lifetime)', renewalText: '2 Group Boosts included', totalBoosts: 2, availableBoosts: Math.max(0, 2 - usedBoosts) });
       return;
     }
-
     const sub = res.pulse_pro_sub;
     if (sub && sub.active && sub.expiresAt > Date.now()) {
-      const renewDate = new Date(sub.expiresAt).toLocaleDateString();
-      cb({
-        hasPro: true,
-        plan: sub.plan,
-        statusText: `Pulse Pro ${sub.plan === 'yearly' ? 'Yearly' : 'Monthly'} Subscription Active`,
-        renewalText: `Next renewal: ${renewDate} • 2 Group Boosts included`,
-        isTrial: false,
-        totalBoosts: 2,
-        availableBoosts: Math.max(0, 2 - usedBoosts)
-      });
+      cb({ hasPro: true, plan: sub.plan, statusText: `Pulse Pro ${sub.plan} Active`, renewalText: `Renews ${new Date(sub.expiresAt).toLocaleDateString()}`, totalBoosts: 2, availableBoosts: Math.max(0, 2 - usedBoosts) });
       return;
     }
-
     let trialStart = res.pulse_trial_start;
     if (!trialStart) {
       trialStart = Date.now();
@@ -177,167 +177,35 @@ function checkProAccess(cb) {
     }
     const elapsed = Date.now() - trialStart;
     if (elapsed < THREE_DAYS_MS) {
-      const hoursLeft = Math.ceil((THREE_DAYS_MS - elapsed) / (1000 * 60 * 60));
-      cb({
-        hasPro: true,
-        plan: 'trial',
-        statusText: `3-Day Free Trial Active (${hoursLeft} hours remaining)`,
-        renewalText: 'Subscribe to Monthly or Yearly to keep Pro & 2 Group Boosts',
-        isTrial: true,
-        totalBoosts: 2,
-        availableBoosts: Math.max(0, 2 - usedBoosts)
-      });
+      const hrs = Math.ceil((THREE_DAYS_MS - elapsed) / 3600000);
+      cb({ hasPro: true, plan: 'trial', statusText: `3-Day Free Trial (${hrs}h left)`, renewalText: 'Includes 2 Group Boosts, Stickers & PIN Lock', totalBoosts: 2, availableBoosts: Math.max(0, 2 - usedBoosts) });
     } else {
-      cb({
-        hasPro: false,
-        plan: 'free',
-        statusText: 'Free Tier — Subscribe to Pulse Pro or redeem a Gift Code',
-        renewalText: 'No active subscription',
-        isTrial: false,
-        totalBoosts: 0,
-        availableBoosts: 0
-      });
+      cb({ hasPro: false, plan: 'free', statusText: 'Free Tier — Upgrade to Pulse Pro', renewalText: 'No active subscription', totalBoosts: 0, availableBoosts: 0 });
     }
   });
 }
 
 function updateProUI() {
-  checkProAccess(({ hasPro, plan, statusText, renewalText, isTrial, totalBoosts, availableBoosts }) => {
-    const popBadge = document.getElementById('popProBadge');
+  checkProAccess(({ hasPro, statusText, renewalText, totalBoosts, availableBoosts }) => {
     const wsBadge = document.getElementById('wsProBadge');
-    if (popBadge) {
-      popBadge.style.display = hasPro ? 'inline-block' : 'none';
-      popBadge.textContent = isTrial ? 'PRO TRIAL' : 'PRO';
-    }
-    if (wsBadge) {
-      wsBadge.style.display = hasPro ? 'inline-block' : 'none';
-      wsBadge.textContent = isTrial ? 'PRO TRIAL' : 'PRO';
-    }
-
-    const descEl = document.getElementById('proStatusDesc');
-    const renewEl = document.getElementById('proRenewalDateText');
-    const pillEl = document.getElementById('proStatusPill');
-    const boostInvEl = document.getElementById('userBoostInventoryText');
-    const cancelRow = document.getElementById('cancelSubRow');
-
-    if (descEl) descEl.textContent = statusText;
-    if (renewEl) renewEl.textContent = renewalText;
-    if (pillEl) pillEl.textContent = hasPro ? (isTrial ? '3-DAY TRIAL' : 'PULSE PRO') : 'FREE TIER';
-    if (boostInvEl) boostInvEl.textContent = `${availableBoosts} / ${totalBoosts} Group Boosts Available`;
-    if (cancelRow) cancelRow.style.display = (plan === 'monthly' || plan === 'yearly') ? 'flex' : 'none';
-
-    document.getElementById('planMonthlyCard')?.classList.toggle('selected', plan === 'monthly');
-    document.getElementById('planYearlyCard')?.classList.toggle('selected', plan === 'yearly');
-
-    document.querySelectorAll('.pro-gate').forEach(gate => {
-      gate.style.display = hasPro ? 'none' : 'flex';
-    });
-
-    renderSoundboardSettings(hasPro);
-    renderCallSoundboard(hasPro);
+    if (wsBadge) wsBadge.style.display = hasPro ? 'inline-block' : 'none';
+    if (document.getElementById('proStatusDesc')) document.getElementById('proStatusDesc').textContent = statusText;
+    if (document.getElementById('proRenewalDateText')) document.getElementById('proRenewalDateText').textContent = renewalText;
+    if (document.getElementById('proStatusPill')) document.getElementById('proStatusPill').textContent = hasPro ? 'PULSE PRO' : 'FREE';
+    if (document.getElementById('userBoostInventoryText')) document.getElementById('userBoostInventoryText').textContent = `${availableBoosts} / ${totalBoosts} Group Boosts Available`;
   });
 }
 
-function renderSoundboardSettings(hasPro) {
-  const container = document.getElementById('soundboardSlotsContainer');
-  if (!container) return;
-  const maxSlots = hasPro ? 5 : 3;
-
-  getState(['pulse_custom_sounds'], (res) => {
-    const sounds = res.pulse_custom_sounds || [];
-    container.innerHTML = '';
-
-    for (let i = 0; i < 5; i++) {
-      const slotData = sounds[i];
-      const isLocked = i >= maxSlots;
-      const row = document.createElement('div');
-      row.className = 'setting-row';
-
-      if (isLocked) {
-        row.innerHTML = `
-          <div><strong>Slot ${i + 1} (Pulse Pro Exclusive)</strong><div style="font-size:0.78rem; color:#fbbf24;">Requires Pulse Pro Subscription</div></div>
-          <button onclick="document.querySelector('[data-sec=pro]').click()" style="background:#eab308; color:#000;">🔒 Upgrade</button>
-        `;
-      } else {
-        row.innerHTML = `
-          <div>
-            <strong>Slot ${i + 1}: ${slotData ? slotData.name : 'Empty Slot'}</strong>
-            <div style="font-size:0.75rem; color:var(--muted);">Upload MP3/WAV sound effect</div>
-          </div>
-          <div style="display:flex; gap:6px; align-items:center;">
-            ${slotData ? `<button class="btn-sec" data-play-slot="${i}">▶️ Play</button><button class="btn-danger" data-del-slot="${i}">✕</button>` : ''}
-            <label style="background:var(--accent); color:#fff; padding:6px 12px; border-radius:8px; cursor:pointer; font-size:0.8rem; font-weight:700;">
-              Upload <input type="file" accept="audio/*" data-upload-slot="${i}" style="display:none;" />
-            </label>
-          </div>
-        `;
-      }
-      container.appendChild(row);
-    }
-
-    container.querySelectorAll('[data-play-slot]').forEach(btn => {
-      btn.onclick = () => {
-        const s = sounds[parseInt(btn.dataset.playSlot, 10)];
-        if (s && s.data) new Audio(s.data).play();
-      };
-    });
-
-    container.querySelectorAll('[data-del-slot]').forEach(btn => {
-      btn.onclick = () => {
-        sounds[parseInt(btn.dataset.delSlot, 10)] = null;
-        setState({ pulse_custom_sounds: sounds }, () => updateProUI());
-      };
-    });
-
-    container.querySelectorAll('[data-upload-slot]').forEach(inp => {
-      inp.onchange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        if (file.size > 1500000) return alert('Please keep sound files under 1.5 MB.');
-        const reader = new FileReader();
-        reader.onload = () => {
-          sounds[parseInt(inp.dataset.uploadSlot, 10)] = {
-            name: file.name.replace(/\.[^/.]+$/, '').substring(0, 16),
-            data: reader.result
-          };
-          setState({ pulse_custom_sounds: sounds }, () => updateProUI());
-        };
-        reader.readAsDataURL(file);
-      };
-    });
-  });
-}
-
-function renderCallSoundboard(hasPro) {
-  const bar = document.getElementById('customSoundboardBar');
-  if (!bar) return;
-  const maxSlots = hasPro ? 5 : 3;
-
-  getState(['pulse_custom_sounds'], (res) => {
-    const sounds = res.pulse_custom_sounds || [];
-    bar.innerHTML = `<span style="font-size:0.75rem; color:#94a3b8;">Soundboard:</span>`;
-
-    const defaultBtn = document.createElement('button');
-    defaultBtn.className = 'btn-sec';
-    defaultBtn.style.cssText = 'padding:4px 8px; font-size:0.75rem;';
-    defaultBtn.textContent = '🔔 Chime';
-    defaultBtn.onclick = () => playSound(chimeAudio);
-    bar.appendChild(defaultBtn);
-
-    for (let i = 0; i < maxSlots; i++) {
-      if (sounds[i] && sounds[i].data) {
-        const b = document.createElement('button');
-        b.className = 'btn-sec';
-        b.style.cssText = 'padding:4px 8px; font-size:0.75rem;';
-        b.textContent = `🔊 ${sounds[i].name}`;
-        b.onclick = () => new Audio(sounds[i].data).play();
-        bar.appendChild(b);
-      }
+function checkPinLockOnBoot() {
+  getState(['pulse_app_pin'], (res) => {
+    if (res.pulse_app_pin && res.pulse_app_pin.length === 4) {
+      const lockScreen = document.getElementById('pinLockOverlay');
+      if (lockScreen) lockScreen.style.display = 'flex';
     }
   });
 }
 
-// --- Group Boosts & Level Helper ---
+// --- Group Boosts & Levels ---
 function getGroupBoostLevel(boostCount) {
   if (boostCount >= 14) return { level: 3, nextGoal: 14, audio: '384 kbps', upload: '100 MB', stream: '1080p 60fps' };
   if (boostCount >= 7) return { level: 2, nextGoal: 14, audio: '256 kbps', upload: '50 MB', stream: '1080p 60fps' };
@@ -345,151 +213,180 @@ function getGroupBoostLevel(boostCount) {
   return { level: 0, nextGoal: 2, audio: '96 kbps', upload: '10 MB', stream: '720p 30fps' };
 }
 
-function addAuditEntry(group, text) {
-  if (!group.auditLog) group.auditLog = [];
-  group.auditLog.unshift({ time: Date.now(), actor: myCode, text });
-  if (group.auditLog.length > 50) group.auditLog.pop();
-}
-
 function boostActiveGroup(delta) {
   if (!activeTarget || activeTarget.type !== 'group') return;
   checkProAccess(({ hasPro, availableBoosts }) => {
-    if (!hasPro) {
-      alert('⭐ Subscribe to Pulse Pro (or activate the 3-day trial) to get 2 Group Boosts!');
-      return;
-    }
+    if (!hasPro) return alert('⭐ Pulse Pro (or 3-Day Trial) is required for Group Boosts!');
     getState(['pulse_groups', 'pulse_boost_allocations'], (res) => {
       const groups = res.pulse_groups || [];
       const allocations = res.pulse_boost_allocations || {};
       const grp = groups.find(g => g.id === activeTarget.id);
       if (!grp) return;
-
-      const currentUserAlloc = allocations[grp.id] || 0;
+      const cur = allocations[grp.id] || 0;
       if (delta > 0) {
-        if (availableBoosts <= 0) return alert('You have used all 2 of your included Group Boosts! Remove a boost from another group or upgrade.');
-        allocations[grp.id] = currentUserAlloc + 1;
+        if (availableBoosts <= 0) return alert('All 2 Group Boosts are already allocated!');
+        allocations[grp.id] = cur + 1;
         grp.boosts = (grp.boosts || 0) + 1;
-        addAuditEntry(grp, `boosted the server (+1 Boost → ${grp.boosts} total)`);
       } else {
-        if (currentUserAlloc <= 0) return alert('You have no active boosts on this server to remove.');
-        allocations[grp.id] = currentUserAlloc - 1;
+        if (cur <= 0) return alert('You have no boosts on this server.');
+        allocations[grp.id] = cur - 1;
         grp.boosts = Math.max(0, (grp.boosts || 0) - 1);
-        addAuditEntry(grp, `removed a server boost (-1 Boost)`);
       }
-
       setState({ pulse_groups: groups, pulse_boost_allocations: allocations }, () => {
         (grp.members || []).forEach(mc => {
           if (mc !== myCode) sendPayloadToCode(mc, { type: 'GROUP_INVITE_SYNC', group: grp });
         });
         updateProUI();
-        if (document.getElementById('groupSettingsOverlay')?.style.display === 'flex') openGroupSettingsDrawer();
         scheduleRefresh(true);
       });
     });
   });
 }
 
-// --- Text-to-Speech Helper ---
-function speakText(text) {
-  if (!('speechSynthesis' in window)) return;
-  getState(['pulse_settings'], (res) => {
-    const s = res.pulse_settings || {};
-    if (s.allowTts === false) return;
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = parseFloat(s.ttsRate || '1.0');
-    window.speechSynthesis.speak(utter);
-  });
-}
+// --- Auto-Idle Detection (#27) & Panic Boss Key (#78) ---
+function initActivityAndHotkeys() {
+  const resetIdle = () => {
+    if (wasAutoIdled) {
+      wasAutoIdled = false;
+      updateSetting('status', 'online');
+      broadcastPresence();
+    }
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      getState(['pulse_settings'], (res) => {
+        const st = (res.pulse_settings || {}).status || 'online';
+        if (st === 'online') {
+          wasAutoIdled = true;
+          updateSetting('status', 'idle');
+          broadcastPresence();
+        }
+      });
+    }, 5 * 60 * 1000);
+  };
+  ['mousemove', 'keydown', 'click'].forEach(ev => document.addEventListener(ev, resetIdle, { passive: true }));
+  resetIdle();
 
-// --- Easter Eggs Engine ---
-function initEasterEggs() {
-  const konami = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
-  let konamiIdx = 0;
+  // Double-Esc Panic Boss Key (#78) & Ctrl+/ Shortcuts (#82)
   document.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() === konami[konamiIdx].toLowerCase()) {
-      konamiIdx++;
-      if (konamiIdx === konami.length) {
-        konamiIdx = 0;
-        updateSetting('theme', 'matrix');
-        alert('🕶️ EASTER EGG UNLOCKED: Matrix Hacker Theme Activated!');
+    if (e.key === 'Escape') {
+      const now = Date.now();
+      if (now - escLastPressed < 450) {
+        const panic = document.getElementById('panicOverlay');
+        if (panic) panic.style.display = panic.style.display === 'block' ? 'none' : 'block';
       }
-    } else {
-      konamiIdx = 0;
+      escLastPressed = now;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+      e.preventDefault();
+      openShortcutsModal();
     }
   });
-
-  const brand = document.getElementById('brandLogo');
-  if (brand) {
-    brand.onclick = () => {
-      logoClickCount++;
-      if (logoClickCount === 7) {
-        logoClickCount = 0;
-        alert('🎉 SECRET FOUND! You discovered the Pulse v11.0 Developer Easter Egg! Try /party, /flip, /matrix, or /tts in chat!');
-      }
-    };
-  }
-
-  const hr = new Date().getHours();
-  if (hr >= 0 && hr <= 3 && document.getElementById('owlBanner')) {
-    document.getElementById('owlBanner').textContent = '🦉 Night Owl Mode Active';
-  }
 }
 
-// --- Initialization & Fast Cross-Tab Sync ---
+function broadcastPresence() {
+  getState(['pulse_settings'], (res) => {
+    const s = res.pulse_settings || {};
+    Object.keys(liveConns).forEach(code => {
+      if (liveConns[code]?.open) {
+        liveConns[code].send({
+          type: 'PRESENCE',
+          status: s.status || 'online',
+          activity: s.customActivity || '',
+          birthday: s.birthday || ''
+        });
+      }
+    });
+  });
+}
+
+// --- Initialization ---
 function scheduleRefresh(force = false) {
   if (renderTimer) cancelAnimationFrame(renderTimer);
   renderTimer = requestAnimationFrame(() => refreshAllViews(force));
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  checkPinLockOnBoot();
   loadSettingsAndTheme();
+  renderThemeMarketplace();
   updateProUI();
   initPeerNetwork();
   bindUIEvents();
-  initEasterEggs();
-  deliverPendingInbox();
-  checkWeeklyScreenQuota();
+  initActivityAndHotkeys();
+  initWhiteboard();
+  initMemeMaker();
   populateMicrophones();
+  checkWeeklyScreenQuota();
+  checkScheduledMessages();
+  checkWhatsNewVersion();
   scheduleRefresh(true);
 
-  // Clean heartbeat: check dead connections every 12s & flush outbox every 1.5s
   setInterval(() => {
     if (peer && peer.disconnected && !peer.destroyed) {
       try { peer.reconnect(); } catch (e) {}
     }
     connectToAllFriends();
-  }, 12000);
-  setInterval(flushOfflineQueue, 1500);
+  }, 15000);
+
+  setInterval(() => {
+    flushOfflineQueue();
+    checkScheduledMessages();
+  }, 1500);
 
   syncChannel.onmessage = () => {
     loadSettingsAndTheme();
     updateProUI();
     scheduleRefresh(true);
   };
-
-  if (!IS_WEB_HOSTED && chrome?.storage?.onChanged) {
-    chrome.storage.onChanged.addListener((changes) => {
-      if (changes.pulse_settings) loadSettingsAndTheme();
-      if (changes.pulse_pro_permanent || changes.pulse_pro_sub || changes.pulse_trial_start || changes.pulse_boost_allocations) updateProUI();
-      if (changes.pulse_pending_inbox) deliverPendingInbox();
-      if (changes.pulse_friends || changes.pulse_groups || changes.pulse_requests || changes.pulse_history) {
-        scheduleRefresh(true);
-        flushOfflineQueue();
-      }
-    });
-  } else {
-    setInterval(() => {
-      deliverPendingInbox();
-      scheduleRefresh(false);
-    }, 3000);
-  }
 });
 
+function checkWhatsNewVersion() {
+  getState(['pulse_last_seen_ver'], (res) => {
+    if (res.pulse_last_seen_ver !== APP_VERSION) {
+      setState({ pulse_last_seen_ver: APP_VERSION });
+      openWhatsNewModal();
+    }
+  });
+}
+
+function openWhatsNewModal() {
+  const modal = document.getElementById('infoListModal');
+  document.getElementById('infoListTitle').textContent = `✨ What's New in Pulse Chat v${APP_VERSION}`;
+  document.getElementById('infoListBody').innerHTML = `
+    <p><strong>🚀 50+ New Features Added:</strong></p>
+    <ul style="padding-left:18px; display:flex; flex-direction:column; gap:6px;">
+      <li><strong>Messaging:</strong> Reply threads, Edit & Delete messages, Markdown formatting, Slash command menu, Unread dividers, Scheduled messages, Polls, File/Image drag-and-drop & Clipboard paste, Mentions, and Message Forwarding.</li>
+      <li><strong>Creative & Collaborative:</strong> Pulse Pro Emoji & Custom Sticker/Meme Maker, plus a real-time P2P Collaborative Whiteboard.</li>
+      <li><strong>Group Servers:</strong> Multi-channel tabs (#text, 📢 announcements, 🔊 voice), Role permissions & colors, Member sidebar, Slowmode, Welcome rules, and Server Notification overrides.</li>
+      <li><strong>Calls & Nerd Mode:</strong> Multi-peer call grid, Picture-in-Picture, Camera switcher, Per-user volume slider, YouTube Watch Together sync, and live WebRTC Nerd Stats.</li>
+      <li><strong>Security & Customization:</strong> Pulse Pro 4-digit PIN lock, Double-Esc Panic Boss Key, Theme Marketplace, Developer Custom CSS editor, Split-Screen Dual Chat, and Birthday badges.</li>
+    </ul>
+  `;
+  modal.style.display = 'flex';
+}
+
+function openShortcutsModal() {
+  const modal = document.getElementById('infoListModal');
+  document.getElementById('infoListTitle').textContent = '⌨️ Keyboard Shortcuts & Slash Commands';
+  document.getElementById('infoListBody').innerHTML = `
+    <div><strong>Esc (Press Twice):</strong> Toggle Panic Boss Screen (Biology Notes)</div>
+    <div><strong>Ctrl + / :</strong> Open this Shortcuts Cheatsheet</div>
+    <div><strong>Enter / Shift+Enter:</strong> Send message / New line</div>
+    <div><strong>Ctrl + V (in chat):</strong> Paste screenshot image directly into chat</div>
+    <hr style="border-color:var(--border);" />
+    <div><strong>/tts [text]:</strong> Text-to-Speech voice message</div>
+    <div><strong>/rps [rock|paper|scissors]:</strong> Challenge friend to Rock-Paper-Scissors</div>
+    <div><strong>/poll Question | A | B:</strong> Post an interactive live poll</div>
+    <div><strong>/party | /flip | /matrix:</strong> Fun visual chat effects</div>
+  `;
+  modal.style.display = 'flex';
+}
+
+// --- Audio & Media Helpers ---
 function playSound(audioObj) {
   getState(['pulse_settings'], (res) => {
     const s = res.pulse_settings || {};
     if (s.sound !== false && s.status !== 'dnd') {
-      audioObj.volume = s.volume !== undefined ? parseFloat(s.volume) : 1.0;
       audioObj.currentTime = 0;
       audioObj.play().catch(() => {});
     }
@@ -497,32 +394,25 @@ function playSound(audioObj) {
 }
 
 function stopCallAudio() {
-  ringtoneAudio.pause();
-  callingAudio.pause();
-  ringtoneAudio.currentTime = 0;
-  callingAudio.currentTime = 0;
-}
-
-function getWeekStartTimestamp() {
-  const now = new Date();
-  const diff = now.getDate() - now.getDay();
-  return new Date(now.setDate(diff)).setHours(0, 0, 0, 0);
+  ringtoneAudio.pause(); callingAudio.pause();
+  ringtoneAudio.currentTime = 0; callingAudio.currentTime = 0;
 }
 
 function checkWeeklyScreenQuota(cb) {
   checkProAccess(({ hasPro }) => {
     const limitSec = hasPro ? 1800 : 600;
     getState(['pulse_screen_quota'], (res) => {
-      const weekStart = getWeekStartTimestamp();
+      const now = new Date();
+      const weekStart = new Date(now.setDate(now.getDate() - now.getDay())).setHours(0, 0, 0, 0);
       let quota = res.pulse_screen_quota || { weekStart, usedSeconds: 0 };
       if (quota.weekStart !== weekStart) {
         quota = { weekStart, usedSeconds: 0 };
         setState({ pulse_screen_quota: quota });
       }
       const rem = Math.max(0, limitSec - quota.usedSeconds);
-      const mins = Math.floor(rem / 60);
-      const secs = String(rem % 60).padStart(2, '0');
-      if (document.getElementById('screenTimeLeft')) document.getElementById('screenTimeLeft').textContent = `${mins}:${secs}`;
+      if (document.getElementById('screenTimeLeft')) {
+        document.getElementById('screenTimeLeft').textContent = `${Math.floor(rem / 60)}:${String(rem % 60).padStart(2, '0')}`;
+      }
       if (cb) cb(rem, quota);
     });
   });
@@ -532,7 +422,7 @@ function toggleScreenShare() {
   if (screenStream) { stopScreenShare(); return; }
   checkWeeklyScreenQuota((rem, quota) => {
     if (rem <= 0) return alert('Weekly screen share quota reached!');
-    navigator.mediaDevices.getDisplayMedia({ video: true }).then((stream) => {
+    navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }).then((stream) => {
       screenStream = stream;
       document.getElementById('localVideo').srcObject = stream;
       if (currentCall && currentCall.peerConnection) {
@@ -582,7 +472,7 @@ function getMediaStreamWithFallback(cb) {
     const audioConstraints = {
       echoCancellation: s.echo !== false,
       noiseSuppression: s.noise !== false,
-      autoGainControl: s.agc !== false
+      autoGainControl: true
     };
     if (s.micDeviceId) audioConstraints.deviceId = { exact: s.micDeviceId };
 
@@ -590,13 +480,13 @@ function getMediaStreamWithFallback(cb) {
       .then(stream => cb(stream))
       .catch(() => {
         navigator.mediaDevices.getUserMedia({ video: false, audio: audioConstraints })
-          .then(audioOnlyStream => cb(audioOnlyStream))
-          .catch(() => alert('Microphone blocked! Click the lock/camera icon in your Chrome address bar and allow Microphone access.'));
+          .then(audioOnly => cb(audioOnly))
+          .catch(() => alert('Microphone access blocked in browser permissions!'));
       });
   });
 }
 
-// --- Low-Latency P2P Engine (STUN + TURN Relay + Single-Tunnel Deduplication) ---
+// --- Universal Cross-Version P2P Engine ---
 function initPeerNetwork() {
   getState(['pulse_my_code', 'pulse_settings'], (res) => {
     myCode = res.pulse_my_code;
@@ -620,16 +510,8 @@ function initPeerNetwork() {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          }
+          { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
         ],
         iceCandidatePoolSize: 2
       }
@@ -637,7 +519,7 @@ function initPeerNetwork() {
 
     peer.on('open', () => {
       if (document.getElementById('meshStatusText')) {
-        document.getElementById('meshStatusText').textContent = `🟢 Connected (${isStreamer ? 'Streamer Mode' : myCode})`;
+        document.getElementById('meshStatusText').textContent = `🟢 Connected (${isStreamer ? '****' : myCode})`;
       }
       connectToAllFriends();
       flushOfflineQueue();
@@ -645,7 +527,7 @@ function initPeerNetwork() {
 
     peer.on('disconnected', () => {
       if (document.getElementById('meshStatusText')) {
-        document.getElementById('meshStatusText').textContent = `🟡 Reconnecting (${myCode})...`;
+        document.getElementById('meshStatusText').textContent = `🟡 Reconnecting...`;
       }
       setTimeout(() => {
         if (peer && peer.disconnected && !peer.destroyed) {
@@ -655,18 +537,7 @@ function initPeerNetwork() {
     });
 
     peer.on('connection', (conn) => handleIncomingConnection(conn));
-
-    peer.on('error', (err) => {
-      if (err.type === 'peer-unavailable' && err.message) {
-        // Fallback to legacy v9.1 or background peer ID if primary workspace ID isn't open
-        const match = err.message.match(/pulse-ws-([A-Z0-9]{4})/);
-        if (match && match[1]) {
-          const targetCode = match[1];
-          delete connectingLocks[targetCode];
-          connectFallbackPrefixes(targetCode);
-        }
-      }
-    });
+    peer.on('error', (err) => { if (err.type === 'peer-unavailable') return; });
 
     peer.on('call', (call) => {
       if (!call || !call.peer) return;
@@ -678,31 +549,11 @@ function initPeerNetwork() {
         }
         currentCall = call;
         playSound(ringtoneAudio);
-        if (IS_POPUP) {
-          openWorkspaceTab();
-        } else {
-          document.getElementById('callerNameTitle').textContent = `Call from ${callerCode}`;
-          document.getElementById('callModal').style.display = 'flex';
-        }
+        document.getElementById('callerNameTitle').textContent = `Call from ${callerCode}`;
+        document.getElementById('callModal').style.display = 'flex';
       });
     });
   });
-}
-
-function openWorkspaceTab() {
-  if (!IS_WEB_HOSTED && chrome?.runtime?.sendMessage) {
-    chrome.runtime.sendMessage({ type: 'OPEN_WORKSPACE' });
-  } else if (IS_WEB_HOSTED && EXT_ID && chrome?.runtime?.sendMessage) {
-    try {
-      chrome.runtime.sendMessage(EXT_ID, { type: 'OPEN_WORKSPACE' }, () => {
-        if (chrome.runtime.lastError) window.open(window.location.href, '_blank');
-      });
-    } catch (e) {
-      window.open(window.location.href, '_blank');
-    }
-  } else {
-    window.open(window.location.href, '_blank');
-  }
 }
 
 function connectToAllFriends() {
@@ -712,25 +563,14 @@ function connectToAllFriends() {
   });
 }
 
-// Opens ONE clean primary Workspace tunnel per friend (eliminates 3x offer collisions)
 function connectToCode(targetCode) {
   if (!peer || !peer.open || !targetCode || targetCode === myCode) return;
   const code = targetCode.trim().toUpperCase();
-
   if (liveConns[code] && liveConns[code].open) return;
-  if (connectingLocks[code] && Date.now() - connectingLocks[code] < 6000) return;
-
+  if (connectingLocks[code] && Date.now() - connectingLocks[code] < 15000) return;
   connectingLocks[code] = Date.now();
-  try {
-    const conn = peer.connect(`pulse-ws-${code}`, { reliable: true });
-    if (conn) handleIncomingConnection(conn);
-  } catch (e) {}
-}
 
-// Only dialed if `pulse-ws-CODE` is offline (supports background worker & v9.1 friends)
-function connectFallbackPrefixes(code) {
-  if (!peer || !peer.open || (liveConns[code] && liveConns[code].open)) return;
-  ['pulse-bg-', 'pulse-'].forEach(prefix => {
+  ['pulse-ws-', 'pulse-bg-', 'pulse-'].forEach(prefix => {
     try {
       const conn = peer.connect(`${prefix}${code}`, { reliable: true });
       if (conn) handleIncomingConnection(conn);
@@ -744,25 +584,30 @@ function handleIncomingConnection(conn) {
 
   conn.on('open', () => {
     delete connectingLocks[senderCode];
-    // Keep the newest active connection for this user
     if (liveConns[senderCode] && liveConns[senderCode] !== conn && liveConns[senderCode].open) {
       try { conn.close(); } catch (e) {}
       return;
     }
     liveConns[senderCode] = conn;
+    broadcastPresence();
     flushOfflineQueue();
     scheduleRefresh(true);
   });
 
   conn.on('data', (payload) => {
     if (!payload) return;
-
     getState(['pulse_blocked'], (blkRes) => {
       if ((blkRes.pulse_blocked || []).includes(senderCode)) return;
 
+      if (payload.type === 'PRESENCE') {
+        peerPresence[senderCode] = { status: payload.status, activity: payload.activity, birthday: payload.birthday };
+        scheduleRefresh(true);
+        return;
+      }
+
       if (payload.type === 'TYPING') {
         if (activeTarget && activeTarget.id === senderCode && document.getElementById('typingIndicator')) {
-          document.getElementById('typingIndicator').textContent = `${senderCode} ${payload.customText || 'is typing...'}`;
+          document.getElementById('typingIndicator').textContent = `${senderCode} is typing...`;
           clearTimeout(typingTimeout);
           typingTimeout = setTimeout(() => { document.getElementById('typingIndicator').textContent = ''; }, 2500);
         }
@@ -774,34 +619,75 @@ function handleIncomingConnection(conn) {
         return;
       }
 
+      if (payload.type === 'EDIT_MSG') {
+        editMessageInHistory(payload.chatId, payload.msgId, payload.newText, false);
+        return;
+      }
+
+      if (payload.type === 'DELETE_MSG') {
+        deleteMessageFromHistory(payload.chatId, payload.msgId, false);
+        return;
+      }
+
+      if (payload.type === 'PIN_MSG') {
+        setPinnedMessage(payload.chatId, payload.msgObj, false);
+        return;
+      }
+
+      if (payload.type === 'POLL_VOTE') {
+        voteOnPoll(payload.chatId, payload.msgId, payload.optIdx, senderCode, false);
+        return;
+      }
+
+      if (payload.type === 'WB_STROKE') {
+        drawRemoteStroke(payload);
+        return;
+      }
+
+      if (payload.type === 'YT_SYNC') {
+        applyRemoteYtSync(payload);
+        return;
+      }
+
       if (payload.type === 'GROUP_INVITE_SYNC') {
         getState(['pulse_groups'], (gRes) => {
           const groups = gRes.pulse_groups || [];
-          const existingIdx = groups.findIndex(g => g.id === payload.group.id);
-          if (existingIdx >= 0) groups[existingIdx] = payload.group;
-          else groups.push(payload.group);
+          const idx = groups.findIndex(g => g.id === payload.group.id);
+          if (idx >= 0) groups[idx] = payload.group;
+          else {
+            groups.push(payload.group);
+            if (payload.group.welcomeMsg) {
+              saveMessageToHistory(payload.group.id, {
+                id: 'sys-' + Date.now(),
+                sender: '🤖 Server Welcome Bot',
+                text: payload.group.welcomeMsg,
+                time: Date.now(),
+                self: false
+              });
+            }
+          }
           setState({ pulse_groups: groups }, () => scheduleRefresh(true));
         });
         return;
       }
 
       if (payload.type === 'GROUP_MSG') {
-        getState(['pulse_groups'], (gRes) => {
-          const groups = gRes.pulse_groups || [];
-          if (!groups.some(g => g.id === payload.groupId)) {
-            groups.push({ id: payload.groupId, name: payload.groupName, members: payload.members || [myCode, senderCode], admin: senderCode });
-            setState({ pulse_groups: groups });
-          }
-        });
-        saveMessageToHistory(payload.groupId, {
+        const storeKey = payload.channelId && payload.channelId !== 'general' ? `${payload.groupId}:${payload.channelId}` : payload.groupId;
+        saveMessageToHistory(storeKey, {
           id: payload.msgId,
           sender: payload.senderName || senderCode,
           guildTag: payload.guildTag || '',
           text: payload.text,
+          image: payload.image,
+          fileName: payload.fileName,
+          fileData: payload.fileData,
+          replyTo: payload.replyTo,
+          poll: payload.poll,
           time: Date.now(),
           self: false
         });
-        notifyIfNotViewing(payload.groupId, `${payload.groupName} (${senderCode})`, payload.text, payload.msgId);
+        incrementUnreadIfNeeded(payload.groupId);
+        notifyIfNotViewing(payload.groupId, `${payload.groupName} (${senderCode})`, payload.text || 'Sent an attachment');
         return;
       }
 
@@ -809,23 +695,27 @@ function handleIncomingConnection(conn) {
         getState(['pulse_friends', 'pulse_settings'], (res) => {
           const friends = res.pulse_friends || [];
           const dmFilter = (res.pulse_settings || {}).dmFilter || 'requests';
-          const isFriend = friends.some(f => f.code === senderCode);
-
-          if (!isFriend) {
+          if (!friends.some(f => f.code === senderCode)) {
             if (dmFilter === 'friends_only') return;
-            addRequest({ type: 'message', code: senderCode, text: payload.text });
+            addRequest({ type: 'message', code: senderCode, text: payload.text || '[Attachment]' });
           } else {
             saveMessageToHistory(senderCode, {
               id: payload.msgId,
               sender: senderCode,
               guildTag: payload.guildTag || '',
               text: payload.text,
+              image: payload.image,
+              fileName: payload.fileName,
+              fileData: payload.fileData,
+              replyTo: payload.replyTo,
+              poll: payload.poll,
               time: Date.now(),
               self: false
             });
+            incrementUnreadIfNeeded(senderCode);
             if (payload.tts) speakText(`${senderCode} says ${payload.text}`);
             if (conn.open) conn.send({ type: 'READ_ACK', msgId: payload.msgId });
-            notifyIfNotViewing(senderCode, senderCode, payload.text, payload.msgId);
+            notifyIfNotViewing(senderCode, senderCode, payload.text || 'Sent an attachment');
           }
         });
       }
@@ -836,64 +726,32 @@ function handleIncomingConnection(conn) {
     });
   });
 
-  conn.on('close', () => {
+  const cleanup = () => {
     if (liveConns[senderCode] === conn) delete liveConns[senderCode];
-    delete connectingLocks[senderCode];
+    try {
+      if (conn.peerConnection) conn.peerConnection.close();
+      conn.close();
+    } catch (e) {}
     scheduleRefresh(true);
-  });
-
-  conn.on('error', () => {
-    if (liveConns[senderCode] === conn) delete liveConns[senderCode];
-    delete connectingLocks[senderCode];
-  });
+  };
+  conn.on('close', cleanup);
+  conn.on('error', cleanup);
 }
 
-function deliverPendingInbox() {
-  getState(['pulse_pending_inbox', 'pulse_friends', 'pulse_history', 'pulse_requests', 'pulse_blocked'], (res) => {
-    const pending = res.pulse_pending_inbox || [];
-    if (pending.length === 0) return;
-
-    const friends = res.pulse_friends || [];
-    const history = res.pulse_history || {};
-    const requests = res.pulse_requests || [];
-    const blocked = res.pulse_blocked || [];
-
-    pending.forEach(item => {
-      if (blocked.includes(item.senderCode)) return;
-      if (!friends.some(f => f.code === item.senderCode)) {
-        requests.push({ type: 'message', code: item.senderCode, text: item.text });
-      } else {
-        if (!history[item.senderCode]) history[item.senderCode] = [];
-        if (!history[item.senderCode].some(m => m.id === item.msgId)) {
-          history[item.senderCode].push({ id: item.msgId, sender: item.senderCode, text: item.text, time: item.time, self: false });
-        }
-      }
-    });
-
-    setState({ pulse_pending_inbox: [], pulse_history: history, pulse_requests: requests }, () => scheduleRefresh(true));
-  });
-}
-
+// --- Outbox Queue (#74) & Scheduled Messages (#15) ---
 function sendPayloadToCode(targetCode, payload) {
   const code = targetCode.trim().toUpperCase();
   const conn = liveConns[code];
   let sent = false;
-
   if (conn && conn.open) {
-    try {
-      conn.send(payload);
-      sent = true;
-    } catch (e) {
-      delete liveConns[code];
-    }
+    try { conn.send(payload); sent = true; } catch (e) { delete liveConns[code]; }
   }
-
-  if (!sent && payload.type !== 'TYPING') {
+  if (!sent && payload.type !== 'TYPING' && payload.type !== 'WB_STROKE') {
     getState(['pulse_outbox'], (res) => {
       const outbox = res.pulse_outbox || [];
-      if (!outbox.some(item => item.payload?.msgId === payload.msgId)) {
-        outbox.push({ targetCode: code, payload });
-        setState({ pulse_outbox: outbox });
+      if (!outbox.some(item => item.payload?.msgId === payload.msgId && payload.msgId)) {
+        outbox.push({ targetCode: code, payload, queuedAt: Date.now() });
+        setState({ pulse_outbox: outbox }, updateQueueBadge);
       }
     });
     connectToCode(code);
@@ -904,21 +762,46 @@ function sendPayloadToCode(targetCode, payload) {
 function flushOfflineQueue() {
   getState(['pulse_outbox'], (res) => {
     const outbox = res.pulse_outbox || [];
+    updateQueueBadge();
     if (outbox.length === 0) return;
     const remaining = [];
     outbox.forEach(item => {
       if (sendPayloadToCode(item.targetCode, item.payload)) {
-        markMessageDelivered(item.targetCode, item.payload.msgId);
+        if (item.payload?.msgId) markMessageDelivered(item.targetCode, item.payload.msgId);
       } else {
         remaining.push(item);
       }
     });
     if (remaining.length !== outbox.length) {
-      setState({ pulse_outbox: remaining });
+      setState({ pulse_outbox: remaining }, updateQueueBadge);
     }
   });
 }
 
+function updateQueueBadge() {
+  getState(['pulse_outbox'], (res) => {
+    const len = (res.pulse_outbox || []).length;
+    const b = document.getElementById('queueBadge');
+    if (b) { b.textContent = len; b.style.display = len > 0 ? 'inline-block' : 'none'; }
+  });
+}
+
+function checkScheduledMessages() {
+  getState(['pulse_scheduled'], (res) => {
+    const list = res.pulse_scheduled || [];
+    if (list.length === 0) return;
+    const now = Date.now();
+    const due = list.filter(s => s.sendAt <= now);
+    const future = list.filter(s => s.sendAt > now);
+    if (due.length > 0) {
+      setState({ pulse_scheduled: future }, () => {
+        due.forEach(item => dispatchDirectOrGroupText(item.target, item.text, item.channelId));
+      });
+    }
+  });
+}
+
+// --- History Mutations (Edit #3, Delete #4, Pin #1, Unread #12/#13, Polls #20) ---
 function saveMessageToHistory(chatId, msgObj) {
   getState(['pulse_history'], (res) => {
     const history = res.pulse_history || {};
@@ -930,11 +813,65 @@ function saveMessageToHistory(chatId, msgObj) {
   });
 }
 
+function editMessageInHistory(chatId, msgId, newText, broadcast = true) {
+  getState(['pulse_history'], (res) => {
+    const history = res.pulse_history || {};
+    const msg = (history[chatId] || []).find(m => m.id === msgId);
+    if (msg) {
+      msg.text = newText;
+      msg.edited = true;
+      setState({ pulse_history: history }, () => scheduleRefresh(true));
+      if (broadcast && activeTarget?.type === 'dm') {
+        sendPayloadToCode(activeTarget.id, { type: 'EDIT_MSG', chatId: myCode, msgId, newText });
+      }
+    }
+  });
+}
+
+function deleteMessageFromHistory(chatId, msgId, broadcast = true) {
+  getState(['pulse_history'], (res) => {
+    const history = res.pulse_history || {};
+    if (history[chatId]) {
+      history[chatId] = history[chatId].filter(m => m.id !== msgId);
+      setState({ pulse_history: history }, () => scheduleRefresh(true));
+      if (broadcast && activeTarget?.type === 'dm') {
+        sendPayloadToCode(activeTarget.id, { type: 'DELETE_MSG', chatId: myCode, msgId });
+      }
+    }
+  });
+}
+
+function setPinnedMessage(chatId, msgObj, broadcast = true) {
+  getState(['pulse_pins'], (res) => {
+    const pins = res.pulse_pins || {};
+    if (msgObj) pins[chatId] = msgObj;
+    else delete pins[chatId];
+    setState({ pulse_pins: pins }, () => scheduleRefresh(true));
+    if (broadcast && activeTarget?.type === 'dm') {
+      sendPayloadToCode(activeTarget.id, { type: 'PIN_MSG', chatId: myCode, msgObj });
+    }
+  });
+}
+
+function voteOnPoll(chatId, msgId, optIdx, voter, broadcast = true) {
+  getState(['pulse_history'], (res) => {
+    const history = res.pulse_history || {};
+    const msg = (history[chatId] || []).find(m => m.id === msgId);
+    if (msg && msg.poll) {
+      msg.poll.options.forEach(o => { o.votes = (o.votes || []).filter(v => v !== voter); });
+      msg.poll.options[optIdx].votes.push(voter);
+      setState({ pulse_history: history }, () => scheduleRefresh(true));
+      if (broadcast && activeTarget?.type === 'dm') {
+        sendPayloadToCode(activeTarget.id, { type: 'POLL_VOTE', chatId: myCode, msgId, optIdx });
+      }
+    }
+  });
+}
+
 function applyMessageReaction(chatId, msgId, emoji) {
   getState(['pulse_history'], (res) => {
     const history = res.pulse_history || {};
-    if (!history[chatId]) return;
-    const msg = history[chatId].find(m => m.id === msgId);
+    const msg = (history[chatId] || []).find(m => m.id === msgId);
     if (msg) {
       if (!msg.reactions) msg.reactions = {};
       msg.reactions[emoji] = (msg.reactions[emoji] || 0) + 1;
@@ -946,22 +883,44 @@ function applyMessageReaction(chatId, msgId, emoji) {
 function markMessageDelivered(chatId, msgId) {
   getState(['pulse_history'], (res) => {
     const history = res.pulse_history || {};
-    if (history[chatId]) {
-      const msg = history[chatId].find(m => m.id === msgId);
-      if (msg && msg.status !== 'Read') msg.status = 'Sent';
-      setState({ pulse_history: history }, () => scheduleRefresh(true));
-    }
+    const msg = (history[chatId] || []).find(m => m.id === msgId);
+    if (msg && msg.status !== 'Read') msg.status = 'Sent';
+    setState({ pulse_history: history }, () => scheduleRefresh(true));
   });
 }
 
 function markMessageRead(chatId, msgId) {
   getState(['pulse_history'], (res) => {
     const history = res.pulse_history || {};
-    if (history[chatId]) {
-      const msg = history[chatId].find(m => m.id === msgId);
-      if (msg) msg.status = 'Read';
-      setState({ pulse_history: history }, () => scheduleRefresh(true));
+    const msg = (history[chatId] || []).find(m => m.id === msgId);
+    if (msg) msg.status = 'Read';
+    setState({ pulse_history: history }, () => scheduleRefresh(true));
+  });
+}
+
+function incrementUnreadIfNeeded(chatId) {
+  if (activeTarget && activeTarget.id === chatId && document.hasFocus()) return;
+  getState(['pulse_unreads'], (res) => {
+    const unreads = res.pulse_unreads || {};
+    unreads[chatId] = (unreads[chatId] || 0) + 1;
+    setState({ pulse_unreads: unreads }, updatePageTitleUnread);
+  });
+}
+
+function clearUnread(chatId) {
+  getState(['pulse_unreads'], (res) => {
+    const unreads = res.pulse_unreads || {};
+    if (unreads[chatId]) {
+      delete unreads[chatId];
+      setState({ pulse_unreads: unreads }, updatePageTitleUnread);
     }
+  });
+}
+
+function updatePageTitleUnread() {
+  getState(['pulse_unreads'], (res) => {
+    const total = Object.values(res.pulse_unreads || {}).reduce((a, b) => a + b, 0);
+    document.title = total > 0 ? `(${total}) Pulse Chat v${APP_VERSION}` : `Pulse Chat v${APP_VERSION} — Workspace`;
   });
 }
 
@@ -976,216 +935,74 @@ function addRequest(reqObj) {
   });
 }
 
-function notifyIfNotViewing(chatId, title, text, msgId) {
-  const isViewing = document.hasFocus() && activeTarget && activeTarget.id === chatId;
-  if (!isViewing && !IS_POPUP) {
+// --- Desktop Notification with Quick-Reply (#84) & Mute Check (#36/#50) ---
+function notifyIfNotViewing(chatId, title, text) {
+  if (document.hasFocus() && activeTarget && activeTarget.id === chatId) return;
+  getState(['pulse_friend_meta', 'pulse_groups'], (res) => {
+    const fMeta = (res.pulse_friend_meta || {})[chatId];
+    if (fMeta && fMeta.muted) return;
+
+    const grp = (res.pulse_groups || []).find(g => g.id === chatId);
+    if (grp) {
+      if (grp.notifOverride === 'mute') return;
+      if (grp.notifOverride === 'mentions' && !text.includes(`@${myCode}`) && !text.includes('@everyone')) return;
+    }
+
     playSound(chimeAudio);
-    const msgData = {
-      type: 'NEW_MESSAGE_NOTIFICATION',
-      senderCode: chatId,
-      senderName: title,
-      text: text,
-      msgId
-    };
-    if (!IS_WEB_HOSTED && chrome?.runtime?.sendMessage) {
-      chrome.runtime.sendMessage(msgData);
-    } else if (IS_WEB_HOSTED && EXT_ID && chrome?.runtime?.sendMessage) {
-      chrome.runtime.sendMessage(EXT_ID, msgData);
-    }
-  }
-}
-
-// --- One-Click Group Member Adder ---
-function openGroupMemberAdder() {
-  if (!activeTarget || activeTarget.type !== 'group') return;
-  getState(['pulse_friends', 'pulse_groups'], (res) => {
-    const friends = res.pulse_friends || [];
-    const groups = res.pulse_groups || [];
-    const currentGroup = groups.find(g => g.id === activeTarget.id);
-    if (!currentGroup) return;
-
-    const list = document.getElementById('groupFriendPickerList');
-    if (!list) return;
-    list.innerHTML = '';
-
-    if (friends.length === 0) {
-      list.innerHTML = `<div style="color:var(--muted); font-size:0.82rem;">Add friends first before adding them to a group!</div>`;
-    } else {
-      friends.forEach(f => {
-        const alreadyIn = (currentGroup.members || []).includes(f.code);
-        const row = document.createElement('div');
-        row.className = 'list-card';
-        row.innerHTML = `
-          <div><strong>${f.name}</strong> <span style="font-size:0.72rem; color:var(--muted);">(${f.code})</span></div>
-          <button class="${alreadyIn ? 'btn-sec' : 'btn-success'}" ${alreadyIn ? 'disabled' : ''}>
-            ${alreadyIn ? '✓ Added' : '+ Add'}
-          </button>
-        `;
-        if (!alreadyIn) {
-          row.querySelector('button').onclick = () => {
-            currentGroup.members.push(f.code);
-            activeTarget.members = currentGroup.members;
-            addAuditEntry(currentGroup, `added member ${f.code}`);
-            setState({ pulse_groups: groups }, () => {
-              currentGroup.members.forEach(mc => {
-                if (mc !== myCode) sendPayloadToCode(mc, { type: 'GROUP_INVITE_SYNC', group: currentGroup });
-              });
-              openGroupMemberAdder();
-              scheduleRefresh(true);
-            });
-          };
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const n = new Notification(title, { body: text });
+      n.onclick = () => {
+        window.focus();
+        const reply = prompt(`Quick Reply to ${title}:`);
+        if (reply && reply.trim()) {
+          dispatchDirectOrGroupText({ type: grp ? 'group' : 'dm', id: chatId, name: title, members: grp?.members }, reply.trim(), 'general');
         }
-        list.appendChild(row);
-      });
+      };
+    } else if ('Notification' in window && Notification.permission !== 'denied') {
+      Notification.requestPermission();
     }
-
-    const modal = document.getElementById('groupMemberModal');
-    if (modal) modal.style.display = 'flex';
   });
 }
 
-// --- Full Group / Server Settings Drawer ---
-function openGroupSettingsDrawer() {
-  if (!activeTarget || activeTarget.type !== 'group') return;
-  getState(['pulse_groups', 'pulse_history'], (res) => {
-    const groups = res.pulse_groups || [];
-    const history = res.pulse_history || {};
-    const grp = groups.find(g => g.id === activeTarget.id);
-    if (!grp) return;
-
-    const boosts = grp.boosts || 0;
-    const bInfo = getGroupBoostLevel(boosts);
-    document.getElementById('grpDrawerTitle').textContent = `${grp.name.toUpperCase()} — SERVER SETTINGS`;
-    document.getElementById('grpBoostSummaryTitle').textContent = `Server Level ${bInfo.level} (${boosts} Boosts)`;
-
-    checkProAccess(({ availableBoosts }) => {
-      document.getElementById('grpAvailableBoostsText').textContent = `You have ${availableBoosts} available Pulse Pro boost(s) to allocate.`;
-    });
-
-    document.getElementById('grpEditName').value = grp.name || '';
-    document.getElementById('grpEditIcon').value = grp.icon || '#';
-    document.getElementById('grpEditTag').value = grp.tag || '';
-    document.getElementById('grpEditDesc').value = grp.description || '';
-    document.getElementById('grpEditBanner').value = grp.bannerColor || '#5865f2';
-    document.getElementById('grpShowBoostBar').checked = grp.showBoostBar !== false;
-    document.getElementById('grpPerkTagToggle').checked = !!grp.perkTagEnabled;
-    document.getElementById('grpPerkHoloToggle').checked = !!grp.perkHoloEnabled;
-
-    const rolesList = document.getElementById('grpRolesList');
-    rolesList.innerHTML = '';
-    (grp.roles || []).forEach((role, rIdx) => {
-      const rRow = document.createElement('div');
-      rRow.className = 'setting-row';
-      rRow.innerHTML = `
-        <span style="color:${role.color}; font-weight:800;">● ${role.name}</span>
-        <button class="btn-danger" style="padding:3px 8px; font-size:0.75rem;" data-del-role="${rIdx}">Delete</button>
-      `;
-      rRow.querySelector('[data-del-role]').onclick = () => {
-        grp.roles.splice(rIdx, 1);
-        addAuditEntry(grp, `deleted role ${role.name}`);
-        setState({ pulse_groups: groups }, openGroupSettingsDrawer);
-      };
-      rolesList.appendChild(rRow);
-    });
-
-    const emojiList = document.getElementById('grpEmojiList');
-    emojiList.innerHTML = '';
-    (grp.emojis || []).forEach((em, eIdx) => {
-      const pill = document.createElement('span');
-      pill.style.cssText = 'background:var(--bg-card); border:1px solid var(--border); padding:4px 8px; border-radius:8px; font-size:0.8rem; cursor:pointer;';
-      pill.textContent = `${em.char} ${em.code} ✕`;
-      pill.onclick = () => {
-        grp.emojis.splice(eIdx, 1);
-        setState({ pulse_groups: groups }, openGroupSettingsDrawer);
-      };
-      emojiList.appendChild(pill);
-    });
-
-    document.getElementById('grpAutoModWords').value = (grp.autoModWords || []).join(', ');
-    document.getElementById('grpRulesScreen').checked = !!grp.rulesScreening;
-    document.getElementById('grpRulesText').value = grp.rulesText || '';
-
-    const auditBox = document.getElementById('grpAuditLogBox');
-    const logs = grp.auditLog || [];
-    auditBox.innerHTML = logs.length === 0
-      ? '<div>No administrative changes recorded yet.</div>'
-      : logs.map(l => `<div style="padding:4px 0; border-bottom:1px solid var(--border);"><strong>${l.actor}</strong> ${l.text} <span style="opacity:0.6;">(${new Date(l.time).toLocaleTimeString()})</span></div>`).join('');
-
-    document.getElementById('insMemberCount').textContent = (grp.members || []).length;
-    document.getElementById('insMsgCount').textContent = (history[grp.id] || []).length;
-    document.getElementById('insBoostCount').textContent = boosts;
-
-    document.getElementById('grpJoinCodeDisplay').textContent = grp.id;
-    const memberList = document.getElementById('grpMemberManageList');
-    memberList.innerHTML = '';
-    (grp.members || []).forEach(mc => {
-      const mRow = document.createElement('div');
-      mRow.className = 'setting-row';
-      mRow.innerHTML = `
-        <span><strong>${mc}</strong> ${mc === grp.admin ? '<span class="pro-badge">OWNER</span>' : ''}</span>
-        ${mc !== myCode ? `
-          <div style="display:flex; gap:6px;">
-            <button class="btn-sec" data-kick-member="${mc}" style="padding:4px 8px; font-size:0.75rem;">Kick</button>
-            <button class="btn-danger" data-ban-member="${mc}" style="padding:4px 8px; font-size:0.75rem;">Ban</button>
-          </div>
-        ` : '<span style="font-size:0.75rem; color:var(--muted);">You</span>'}
-      `;
-      mRow.querySelector('[data-kick-member]')?.addEventListener('click', () => {
-        grp.members = grp.members.filter(m => m !== mc);
-        addAuditEntry(grp, `kicked member ${mc}`);
-        setState({ pulse_groups: groups }, () => { openGroupSettingsDrawer(); scheduleRefresh(true); });
-      });
-      mRow.querySelector('[data-ban-member]')?.addEventListener('click', () => {
-        grp.members = grp.members.filter(m => m !== mc);
-        if (!grp.banned) grp.banned = [];
-        if (!grp.banned.includes(mc)) grp.banned.push(mc);
-        addAuditEntry(grp, `banned member ${mc}`);
-        setState({ pulse_groups: groups }, () => { openGroupSettingsDrawer(); scheduleRefresh(true); });
-      });
-      memberList.appendChild(mRow);
-    });
-
-    const bannedList = document.getElementById('grpBannedList');
-    const banned = grp.banned || [];
-    bannedList.innerHTML = banned.length === 0
-      ? '<div style="font-size:0.8rem; color:var(--muted);">No banned users.</div>'
-      : banned.map(bc => `<div class="setting-row"><span>${bc}</span><button class="btn-sec" data-unban="${bc}" style="padding:3px 8px; font-size:0.75rem;">Revoke Ban</button></div>`).join('');
-    bannedList.querySelectorAll('[data-unban]').forEach(btn => {
-      btn.onclick = () => {
-        grp.banned = grp.banned.filter(b => b !== btn.dataset.unban);
-        addAuditEntry(grp, `unbanned ${btn.dataset.unban}`);
-        setState({ pulse_groups: groups }, openGroupSettingsDrawer);
-      };
-    });
-
-    document.getElementById('groupSettingsOverlay').style.display = 'flex';
-  });
+// --- Rich Markdown (#9), Mentions (#23), Spoilers ---
+function formatMessageText(rawText, settings) {
+  let out = rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (settings.autoEmoji !== false) {
+    out = out.replace(/:\)/g, '😊').replace(/:\(/g, '😢').replace(/<3/g, '❤️').replace(/:D/g, '😄');
+  }
+  // Inline code, bold, italic, strikethrough (#9)
+  out = out.replace(/`([^`]+)`/g, '<code style="background:rgba(0,0,0,0.3); padding:1px 5px; border-radius:4px;">$1</code>');
+  out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  out = out.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  // Mentions (#23)
+  out = out.replace(/(@[A-Z0-9]{4}|@everyone)/gi, '<span style="background:rgba(240,178,50,0.3); color:#fde047; font-weight:800; padding:0 4px; border-radius:4px;">$1</span>');
+  // Spoilers
+  out = out.replace(/\|\|(.+?)\|\|/g, '<span class="spoiler-box" onclick="this.classList.toggle(\'revealed\')">$1</span>');
+  return out;
 }
 
-// --- Rendering Views (With Diff Guard to Prevent UI Lag) ---
+// --- Rendering Sidebar & Active Chat ---
 function refreshAllViews(force = false) {
-  getState(['pulse_friends', 'pulse_groups', 'pulse_requests', 'pulse_history', 'pulse_settings'], (res) => {
+  getState(['pulse_friends', 'pulse_groups', 'pulse_requests', 'pulse_history', 'pulse_settings', 'pulse_unreads', 'pulse_pins', 'pulse_friend_meta', 'pulse_outbox'], (res) => {
     const friends = res.pulse_friends || [];
     const groups = res.pulse_groups || [];
     const requests = res.pulse_requests || [];
     const history = res.pulse_history || {};
     const settings = res.pulse_settings || {};
+    const unreads = res.pulse_unreads || {};
+    const pins = res.pulse_pins || {};
+    const fMeta = res.pulse_friend_meta || {};
+    const outbox = res.pulse_outbox || [];
 
     const onlineCodes = Object.keys(liveConns).filter(k => liveConns[k]?.open).join(',');
-    const activeMsgs = activeTarget ? (history[activeTarget.id] || []) : [];
+    const storeKey = getActiveHistoryKey();
+    const activeMsgs = storeKey ? (history[storeKey] || []) : [];
     const lastMsg = activeMsgs[activeMsgs.length - 1];
-    const sig = `${activeTarget?.id}|${friends.length}|${groups.length}|${requests.length}|${activeMsgs.length}|${lastMsg?.id}|${lastMsg?.status}|${onlineCodes}`;
+    const sig = `${storeKey}|${friends.length}|${groups.length}|${requests.length}|${activeMsgs.length}|${lastMsg?.id}|${lastMsg?.text}|${lastMsg?.status}|${onlineCodes}|${JSON.stringify(unreads[activeTarget?.id])}`;
 
     if (!force && sig === lastRenderSignature) return;
     lastRenderSignature = sig;
-
-    if (IS_POPUP) {
-      renderList('friendsList', friends, 'dm', settings);
-      renderList('groupsList', groups, 'group', settings);
-      renderRequestsList('requestsList', requests);
-      renderActiveChat(history, settings, groups);
-      return;
-    }
 
     const badge = document.getElementById('reqBadge');
     if (badge) {
@@ -1193,65 +1010,108 @@ function refreshAllViews(force = false) {
       badge.style.display = requests.length > 0 ? 'inline-block' : 'none';
     }
 
-    const mode = document.getElementById('railGroups')?.classList.contains('active') ? 'group' :
-                 document.getElementById('railRequests')?.classList.contains('active') ? 'req' : 'dm';
-    if (mode === 'req') renderRequestsList('sidebarList', requests);
-    else if (mode === 'group') renderList('sidebarList', groups, 'group', settings);
-    else renderList('sidebarList', friends, 'dm', settings);
+    const isGroups = document.getElementById('railGroups')?.classList.contains('active');
+    const isReqs = document.getElementById('railRequests')?.classList.contains('active');
+    const isQueue = document.getElementById('railQueue')?.classList.contains('active');
 
-    renderActiveChat(history, settings, groups);
+    if (isQueue) renderQueueSidebar('sidebarList', outbox);
+    else if (isReqs) renderRequestsList('sidebarList', requests);
+    else if (isGroups) renderList('sidebarList', groups, 'group', settings, unreads, fMeta);
+    else renderList('sidebarList', friends, 'dm', settings, unreads, fMeta);
+
+    renderActiveChat(history, settings, groups, pins, unreads);
+    if (splitTarget) renderSplitChat(history, settings);
   });
 }
 
-function renderList(containerId, items, type, settings) {
+function getActiveHistoryKey() {
+  if (!activeTarget) return null;
+  if (activeTarget.type === 'group' && activeChannelId && activeChannelId !== 'general') {
+    return `${activeTarget.id}:${activeChannelId}`;
+  }
+  return activeTarget.id;
+}
+
+function renderList(containerId, items, type, settings, unreads, fMeta) {
   const container = document.getElementById(containerId);
   if (!container) return;
   container.innerHTML = '';
 
   if (items.length === 0) {
-    container.innerHTML = `<div style="color:var(--muted); text-align:center; padding:10px; font-size:0.78rem;">No ${type === 'dm' ? 'friends' : 'groups'} yet.</div>`;
+    container.innerHTML = `<div style="color:var(--muted); text-align:center; padding:12px; font-size:0.78rem;">No ${type === 'dm' ? 'friends' : 'groups'} yet.</div>`;
     return;
   }
+
+  const todayMmDd = `${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
 
   items.forEach(item => {
     const id = type === 'dm' ? item.code : item.id;
     const isOnline = type === 'dm' && !!liveConns[id]?.open;
+    const pres = peerPresence[id] || {};
+    const statusDotColor = !isOnline ? '#64748b' : pres.status === 'dnd' ? '#ef4444' : pres.status === 'idle' ? '#f59e0b' : '#10b981';
+    const meta = fMeta[id] || {};
+    const displayName = meta.nickname || item.name;
+    const isBirthday = pres.birthday === todayMmDd;
+    const unreadCnt = unreads[id] || 0;
+
     const el = document.createElement('div');
     el.className = `list-card ${activeTarget && activeTarget.id === id ? 'active' : ''}`;
-    const displayId = settings.streamerMode ? '••••' : id;
-    const boostCount = item.boosts || 0;
-
     el.innerHTML = `
       <div style="flex:1; overflow:hidden;">
         <div style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-          ${type === 'group' ? (item.icon || '#') + ' ' : ''}${item.name}
-          ${type === 'group' && boostCount > 0 ? `<span class="boost-tag">🚀 ${boostCount}</span>` : ''}
+          ${type === 'group' ? (item.icon || '#') + ' ' : ''}${displayName} ${isBirthday ? '🎂' : ''} ${meta.muted ? '🔇' : ''}
         </div>
-        <div style="font-size:0.68rem; color:var(--muted);">${type === 'dm' ? displayId : `${(item.members || []).length} members`}</div>
+        <div class="muted-sub" style="font-size:0.7rem; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          ${type === 'dm' ? (pres.activity || (settings.streamerMode ? '••••' : id)) : `${(item.members || []).length} members`}
+        </div>
       </div>
       <div style="display:flex; align-items:center; gap:6px;">
-        ${type === 'dm' ? `<span style="color:${isOnline ? '#10b981' : '#64748b'}; font-size:0.75rem;">●</span>` : ''}
-        ${type === 'dm' ? `<button data-remove-friend="${id}" title="Remove Friend" style="background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.35); border-radius:6px; padding:2px 7px; font-size:0.75rem; font-weight:800; cursor:pointer;">✕</button>` : ''}
+        ${unreadCnt > 0 ? `<span style="background:var(--danger); color:#fff; font-size:0.68rem; font-weight:800; padding:1px 6px; border-radius:10px;">${unreadCnt}</span>` : ''}
+        ${type === 'dm' ? `<span style="color:${statusDotColor}; font-size:0.8rem;">●</span>` : ''}
+        ${type === 'dm' ? `<button data-remove-friend="${id}" style="background:rgba(239,68,68,0.18); color:#ef4444; padding:2px 6px; font-size:0.72rem;">✕</button>` : ''}
       </div>
     `;
     el.onclick = (e) => {
       if (e.target.closest('[data-remove-friend]')) return;
-      activeTarget = { type, id, name: item.name, members: item.members, admin: item.admin, icon: item.icon };
+      activeTarget = { type, id, name: displayName, members: item.members, admin: item.admin, icon: item.icon };
+      activeChannelId = 'general';
+      clearUnread(id);
       if (type === 'dm') connectToCode(id);
-      if (IS_POPUP && document.getElementById('tabChat')) {
-        document.getElementById('tabChat').click();
-      }
       scheduleRefresh(true);
     };
     const remBtn = el.querySelector('[data-remove-friend]');
     if (remBtn) {
       remBtn.onclick = (e) => {
         e.stopPropagation();
-        if (confirm(`Remove ${item.name} and delete all chat records?`)) {
-          removeFriendAndRecords(id, false);
-        }
+        if (confirm(`Remove ${displayName} and delete chat history?`)) removeFriendAndRecords(id, false);
       };
     }
+    container.appendChild(el);
+  });
+}
+
+function renderQueueSidebar(containerId, outbox) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.innerHTML = '';
+  if (outbox.length === 0) {
+    container.innerHTML = `<div style="color:var(--muted); text-align:center; padding:12px; font-size:0.8rem;">Offline Outbox is empty!</div>`;
+    return;
+  }
+  outbox.forEach((item, idx) => {
+    const el = document.createElement('div');
+    el.className = 'list-card';
+    el.innerHTML = `
+      <div style="overflow:hidden;">
+        <strong>To ${item.targetCode}</strong>
+        <div style="font-size:0.74rem; color:var(--muted);">${item.payload?.text || '[Attachment]'}</div>
+      </div>
+      <button class="btn-danger" style="padding:3px 7px; font-size:0.7rem;" data-drop-q="${idx}">Cancel</button>
+    `;
+    el.querySelector('[data-drop-q]').onclick = () => {
+      outbox.splice(idx, 1);
+      setState({ pulse_outbox: outbox }, () => { updateQueueBadge(); scheduleRefresh(true); });
+    };
     container.appendChild(el);
   });
 }
@@ -1260,21 +1120,18 @@ function renderRequestsList(containerId, requests) {
   const container = document.getElementById(containerId);
   if (!container) return;
   container.innerHTML = '';
-
   if (requests.length === 0) {
     container.innerHTML = `<div style="color:var(--muted); text-align:center; padding:12px; font-size:0.8rem;">No pending requests.</div>`;
     return;
   }
-
   requests.forEach((req, idx) => {
     const el = document.createElement('div');
     el.className = 'list-card';
     el.style.flexDirection = 'column';
-    el.style.alignItems = 'flex-start';
-    el.style.gap = '6px';
+    el.style.alignItems = 'stretch';
     el.innerHTML = `
-      <div><strong>${req.code}</strong> ${req.text ? `<div style="font-size:0.75rem; color:var(--muted);">"${req.text}"</div>` : ''}</div>
-      <div style="display:flex; gap:6px; width:100%;">
+      <div><strong>${req.code}</strong><div style="font-size:0.75rem; color:var(--muted);">"${req.text || ''}"</div></div>
+      <div style="display:flex; gap:6px; margin-top:6px;">
         <button class="btn-success" style="flex:1; padding:4px;" data-accept="${idx}">Accept</button>
         <button class="btn-danger" style="flex:1; padding:4px;" data-decline="${idx}">Decline</button>
       </div>
@@ -1299,221 +1156,576 @@ function renderRequestsList(containerId, requests) {
   });
 }
 
-function formatMessageText(rawText, settings, groupObj) {
-  let out = rawText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  if (settings.autoEmoji !== false) {
-    out = out.replace(/:\)/g, '😊').replace(/:\(/g, '😢').replace(/<3/g, '❤️').replace(/:D/g, '😄');
-  }
-  if (groupObj && Array.isArray(groupObj.emojis)) {
-    groupObj.emojis.forEach(em => {
-      if (em.code && em.char) out = out.split(em.code).join(em.char);
-    });
-  }
-  if (settings.spoilerMode !== 'always') {
-    out = out.replace(/\|\|(.+?)\|\|/g, '<span class="spoiler-box" onclick="this.classList.toggle(\'revealed\')">$1</span>');
-  } else {
-    out = out.replace(/\|\|(.+?)\|\|/g, '<span>$1</span>');
-  }
-  return out;
-}
-
-function renderActiveChat(history, settings, groups = []) {
-  const titleEl = document.getElementById('activeChatTitle') || document.getElementById('popupChatTitle');
-  const box = document.getElementById('messagesBox') || document.getElementById('popupMessagesBox');
+function renderActiveChat(history, settings, groups, pins, unreads) {
+  const titleEl = document.getElementById('activeChatTitle');
+  const box = document.getElementById('messagesBox');
   if (!titleEl || !box) return;
 
-  const callBtn = document.getElementById('wsCallBtn') || document.getElementById('popupCallBtn');
-  const addMemberBtn = document.getElementById('addGroupMemberBtn');
+  const callBtn = document.getElementById('wsCallBtn');
+  const infoBtn = document.getElementById('profileInspectBtn');
+  const splitBtn = document.getElementById('splitScreenBtn');
+  const memBtn = document.getElementById('toggleMembersBtn');
+  const addMemBtn = document.getElementById('addGroupMemberBtn');
   const grpSetBtn = document.getElementById('groupSettingsBtn');
-  const headerBoostBtn = document.getElementById('headerBoostBtn');
+  const boostBtn = document.getElementById('headerBoostBtn');
   const levelBadge = document.getElementById('headerBoostLevelBadge');
   const boostStrip = document.getElementById('groupBoostBarStrip');
+  const channelBar = document.getElementById('channelTabsBar');
+  const pinnedBanner = document.getElementById('pinnedBanner');
 
   if (!activeTarget) {
     titleEl.textContent = 'Select a Friend or Group';
-    if (callBtn) callBtn.style.display = 'none';
-    if (addMemberBtn) addMemberBtn.style.display = 'none';
-    if (grpSetBtn) grpSetBtn.style.display = 'none';
-    if (headerBoostBtn) headerBoostBtn.style.display = 'none';
-    if (levelBadge) levelBadge.style.display = 'none';
-    if (boostStrip) boostStrip.style.display = 'none';
+    [callBtn, infoBtn, splitBtn, memBtn, addMemBtn, grpSetBtn, boostBtn, levelBadge, boostStrip, channelBar, pinnedBanner].forEach(el => { if (el) el.style.display = 'none'; });
     box.innerHTML = `
       <div class="empty-welcome">
-        <div style="font-size:2rem;">⚡</div>
-        <strong>Welcome to Pulse Chat v11.0</strong>
-        <p style="font-size:0.82rem; color:var(--muted);">Select a friend or group on the left, or open ⚙️ User Settings to manage your Pulse Pro Subscription & 2 Group Boosts.</p>
+        <div style="font-size:2.2rem;">⚡</div>
+        <strong>Pulse Chat v${APP_VERSION}</strong>
+        <p style="font-size:0.82rem; color:var(--muted);">Select a friend or group on the left, create custom stickers 🎨, or open the live P2P Whiteboard ✏️.</p>
       </div>
     `;
     return;
   }
 
-  const currentGroup = activeTarget.type === 'group' ? groups.find(g => g.id === activeTarget.id) : null;
-  titleEl.textContent = `${activeTarget.type === 'group' ? ((currentGroup?.icon || activeTarget.icon || '#') + ' ') : ''}${currentGroup?.name || activeTarget.name}`;
+  const isGroup = activeTarget.type === 'group';
+  const currentGroup = isGroup ? groups.find(g => g.id === activeTarget.id) : null;
+  titleEl.textContent = `${isGroup ? ((currentGroup?.icon || '#') + ' ') : ''}${currentGroup?.name || activeTarget.name}`;
 
-  if (callBtn) callBtn.style.display = activeTarget.type === 'dm' ? 'inline-block' : 'none';
-  if (addMemberBtn) addMemberBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
-  if (grpSetBtn) grpSetBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
-  if (headerBoostBtn) headerBoostBtn.style.display = activeTarget.type === 'group' ? 'inline-block' : 'none';
+  if (callBtn) callBtn.style.display = 'inline-block';
+  if (splitBtn) splitBtn.style.display = 'inline-block';
+  if (infoBtn) infoBtn.style.display = !isGroup ? 'inline-block' : 'none';
+  if (memBtn) memBtn.style.display = isGroup ? 'inline-block' : 'none';
+  if (addMemBtn) addMemBtn.style.display = isGroup ? 'inline-block' : 'none';
+  if (grpSetBtn) grpSetBtn.style.display = isGroup ? 'inline-block' : 'none';
+  if (boostBtn) boostBtn.style.display = isGroup ? 'inline-block' : 'none';
 
+  // Group Channels Strip (#40, #45)
+  if (isGroup && currentGroup && channelBar) {
+    const channels = currentGroup.channels || [{ id: 'general', name: 'general', type: 'text' }];
+    channelBar.style.display = 'flex';
+    channelBar.innerHTML = '';
+    channels.forEach(ch => {
+      const pill = document.createElement('div');
+      pill.className = `channel-pill ${activeChannelId === ch.id ? 'active' : ''}`;
+      const icon = ch.type === 'voice' ? '🔊' : ch.type === 'announcement' ? '📢' : '#';
+      pill.textContent = `${icon} ${ch.name}`;
+      pill.onclick = () => {
+        if (ch.type === 'voice') {
+          startVoiceOrVideoCall();
+          return;
+        }
+        activeChannelId = ch.id;
+        scheduleRefresh(true);
+      };
+      channelBar.appendChild(pill);
+    });
+  } else if (channelBar) {
+    channelBar.style.display = 'none';
+  }
+
+  // Group Boost Strip
   if (currentGroup && levelBadge && boostStrip) {
     const boosts = currentGroup.boosts || 0;
     const bInfo = getGroupBoostLevel(boosts);
     levelBadge.style.display = 'inline-block';
     levelBadge.textContent = `LEVEL ${bInfo.level}`;
-    if (currentGroup.showBoostBar !== false) {
-      boostStrip.style.display = 'flex';
-      document.getElementById('boostBarLabel').textContent = `🚀 Group Boosts: ${boosts} / ${bInfo.nextGoal} for Level ${Math.min(3, bInfo.level + 1)}`;
-      document.getElementById('boostBarFill').style.width = `${Math.min(100, (boosts / bInfo.nextGoal) * 100)}%`;
-      document.getElementById('boostPerksSummary').textContent = `${bInfo.audio} Audio • ${bInfo.upload} Uploads • ${bInfo.stream}`;
-    } else {
-      boostStrip.style.display = 'none';
-    }
+    boostStrip.style.display = 'flex';
+    document.getElementById('boostBarLabel').textContent = `🚀 Boosts: ${boosts} / ${bInfo.nextGoal}`;
+    document.getElementById('boostBarFill').style.width = `${Math.min(100, (boosts / bInfo.nextGoal) * 100)}%`;
+    document.getElementById('boostPerksSummary').textContent = `${bInfo.audio} • ${bInfo.stream}`;
   } else {
     if (levelBadge) levelBadge.style.display = 'none';
     if (boostStrip) boostStrip.style.display = 'none';
   }
 
-  const limit = parseInt(settings.renderLimit || '150', 10);
-  const msgs = (history[activeTarget.id] || []).slice(-limit);
-  box.innerHTML = '';
+  // Pinned Banner (#1)
+  const storeKey = getActiveHistoryKey();
+  const pinnedObj = pins[storeKey];
+  if (pinnedObj && pinnedBanner) {
+    pinnedBanner.style.display = 'flex';
+    document.getElementById('pinnedBannerText').textContent = `📌 Pinned (${pinnedObj.sender}): ${pinnedObj.text || '[Attachment]'}`;
+  } else if (pinnedBanner) {
+    pinnedBanner.style.display = 'none';
+  }
 
+  // Render Messages
+  const msgs = (history[storeKey] || []).slice(-150);
+  box.innerHTML = '';
   if (msgs.length === 0) {
-    box.innerHTML = `
-      <div class="empty-welcome">
-        <strong>Start of ${currentGroup?.name || activeTarget.name}</strong>
-        <p style="font-size:0.8rem; color:var(--muted);">End-to-end peer synced. Try <code>||spoiler||</code> or <code>/tts hello</code>!</p>
-      </div>
-    `;
+    box.innerHTML = `<div class="empty-welcome"><strong>No messages yet</strong><p style="font-size:0.8rem; color:var(--muted);">Say hello, paste a screenshot, or type <code>/</code> for commands!</p></div>`;
     return;
   }
 
+  const unreadStartIdx = msgs.length - (unreads[activeTarget.id] || 0);
   const frag = document.createDocumentFragment();
-  msgs.forEach(m => {
-    const div = document.createElement('div');
-    div.className = `message ${m.self ? 'sent' : 'received'}`;
-    const timeStr = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const statusHtml = (m.self && m.status) ? `<span>${m.status === 'Queued' ? '🕒' : m.status === 'Read' ? '✓✓' : '✓'}</span>` : '';
-    const tagPill = m.guildTag ? `<span class="guild-tag-pill">${m.guildTag}</span>` : '';
-    const senderLabel = (!m.self && activeTarget.type === 'group') ? `<div style="font-size:0.7rem; font-weight:800; color:var(--accent); margin-bottom:2px;">${m.sender}${tagPill}</div>` : '';
-    const devCopyBtn = settings.devMode ? `<button class="btn-sec" style="padding:1px 5px; font-size:0.65rem;" onclick="navigator.clipboard.writeText('${m.id}')">ID</button>` : '';
 
-    let reactHtml = '';
-    if (m.reactions && settings.showReactions !== false) {
-      reactHtml = `<div style="display:flex; gap:4px; margin-top:4px;">` + Object.entries(m.reactions).map(([em, cnt]) => `<span style="background:rgba(0,0,0,0.25); border-radius:10px; padding:1px 6px; font-size:0.7rem;">${em} ${cnt}</span>`).join('') + `</div>`;
+  msgs.forEach((m, idx) => {
+    if (idx === unreadStartIdx && unreads[activeTarget.id] > 0) {
+      const divLine = document.createElement('div');
+      divLine.className = 'unread-divider';
+      divLine.textContent = 'NEW MESSAGES';
+      frag.appendChild(divLine);
     }
 
-    div.innerHTML = `${senderLabel}<div>${formatMessageText(m.text || '', settings, currentGroup)}</div>${reactHtml}<div class="msg-meta"><span>${timeStr}</span>${devCopyBtn}${statusHtml}</div>`;
-    div.ondblclick = () => {
-      if (settings.showReactions === false) return;
-      applyMessageReaction(activeTarget.id, m.id, '🔥');
-      if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'REACTION', chatId: myCode, msgId: m.id, emoji: '🔥' });
+    const div = document.createElement('div');
+    const isMentioned = !m.self && m.text && (m.text.includes(`@${myCode}`) || m.text.includes('@everyone'));
+    div.className = `message ${m.self ? 'sent' : 'received'} ${isMentioned ? 'mentioned' : ''}`;
+
+    const timeStr = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const statusHtml = (m.self && m.status) ? `<span>${m.status === 'Queued' ? '🕒' : m.status === 'Read' ? '✓✓' : '✓'}</span>` : '';
+    const editedHtml = m.edited ? `<span style="font-style:italic;">(edited)</span>` : '';
+    const senderLabel = (!m.self && isGroup) ? `<div style="font-size:0.72rem; font-weight:800; color:#fbbf24; margin-bottom:2px;">${m.sender}</div>` : '';
+    const replyHtml = m.replyTo ? `<div class="reply-quote">↩️ <strong>${m.replyTo.sender}:</strong> ${m.replyTo.text}</div>` : '';
+
+    let mediaHtml = '';
+    if (m.image) mediaHtml += `<img src="${m.image}" style="max-width:240px; max-height:220px; border-radius:8px; display:block; margin-top:4px;" />`;
+    if (m.fileData && m.fileName) mediaHtml += `<a href="${m.fileData}" download="${m.fileName}" style="display:inline-block; margin-top:4px; background:rgba(0,0,0,0.25); padding:5px 9px; border-radius:6px; color:#fff; text-decoration:none; font-size:0.78rem;">📄 Download ${m.fileName}</a>`;
+
+    let pollHtml = '';
+    if (m.poll) {
+      const totalVotes = m.poll.options.reduce((sum, o) => sum + (o.votes || []).length, 0);
+      pollHtml = `<div style="background:rgba(0,0,0,0.22); padding:8px; border-radius:8px; margin-top:6px;">
+        <div style="font-weight:800; margin-bottom:6px;">📊 ${m.poll.question}</div>
+        ${m.poll.options.map((opt, oIdx) => {
+          const cnt = (opt.votes || []).length;
+          const pct = totalVotes > 0 ? Math.round((cnt / totalVotes) * 100) : 0;
+          return `<div data-vote-msg="${m.id}" data-vote-opt="${oIdx}" style="background:rgba(255,255,255,0.1); padding:5px 8px; border-radius:6px; margin-bottom:4px; cursor:pointer; font-size:0.78rem;">
+            ${opt.label} — <strong>${cnt} (${pct}%)</strong>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+
+    let reactHtml = '';
+    if (m.reactions) {
+      reactHtml = `<div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">` +
+        Object.entries(m.reactions).map(([em, cnt]) => `<span style="background:rgba(0,0,0,0.28); border-radius:10px; padding:1px 6px; font-size:0.72rem;">${em} ${cnt}</span>`).join('') +
+        `</div>`;
+    }
+
+    div.innerHTML = `
+      <div class="msg-actions">
+        <button data-act-reply title="Reply">↩️</button>
+        <button data-act-react title="React">🔥</button>
+        <button data-act-pin title="Pin">📌</button>
+        <button data-act-fwd title="Forward">➡️</button>
+        ${m.self ? `<button data-act-edit title="Edit">✏️</button><button data-act-del title="Delete">🗑️</button>` : ''}
+      </div>
+      ${senderLabel}
+      ${replyHtml}
+      <div>${formatMessageText(m.text || '', settings)}</div>
+      ${mediaHtml}
+      ${pollHtml}
+      ${reactHtml}
+      <div class="msg-meta">${editedHtml}<span>${timeStr}</span>${statusHtml}</div>
+    `;
+
+    div.querySelector('[data-act-reply]').onclick = () => {
+      replyingToMsg = { id: m.id, sender: m.self ? 'You' : m.sender, text: (m.text || '[Attachment]').slice(0, 60) };
+      document.getElementById('replyPreviewBar').style.display = 'flex';
+      document.getElementById('replyPreviewText').textContent = `Replying to ${replyingToMsg.sender}: "${replyingToMsg.text}"`;
+      document.getElementById('msgInput').focus();
     };
+    div.querySelector('[data-act-react]').onclick = () => {
+      const em = prompt('Enter emoji reaction:', '👍') || '👍';
+      applyMessageReaction(storeKey, m.id, em);
+      if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, { type: 'REACTION', chatId: myCode, msgId: m.id, emoji: em });
+    };
+    div.querySelector('[data-act-pin]').onclick = () => setPinnedMessage(storeKey, m, true);
+    div.querySelector('[data-act-fwd]').onclick = () => {
+      const dest = prompt('Enter Friend 4-Digit Code to forward this message to:');
+      if (dest && dest.trim().length === 4) {
+        dispatchDirectOrGroupText({ type: 'dm', id: dest.trim().toUpperCase(), name: dest.trim().toUpperCase() }, `↪️ Forwarded: ${m.text || '[Attachment]'}`, 'general');
+        alert('Forwarded!');
+      }
+    };
+    div.querySelector('[data-act-edit]')?.addEventListener('click', () => {
+      const updated = prompt('Edit message:', m.text);
+      if (updated && updated.trim()) editMessageInHistory(storeKey, m.id, updated.trim(), true);
+    });
+    div.querySelector('[data-act-del]')?.addEventListener('click', () => {
+      if (confirm('Delete this message?')) deleteMessageFromHistory(storeKey, m.id, true);
+    });
+    div.querySelectorAll('[data-vote-msg]').forEach(btn => {
+      btn.onclick = () => voteOnPoll(storeKey, btn.dataset.voteMsg, parseInt(btn.dataset.voteOpt, 10), myCode, true);
+    });
+
     frag.appendChild(div);
   });
   box.appendChild(frag);
   box.scrollTop = box.scrollHeight;
 }
 
-// --- Sending Messages + Group AutoMod + Restricted Phrases + TTS ---
-function handleSendMessage(customInputId) {
-  const input = document.getElementById(customInputId || 'msgInput') || document.getElementById('popupMsgInput') || document.querySelector('textarea, input[type="text"]');
-  let text = input ? input.value.trim() : '';
-  if (!text) return;
+function renderSplitChat(history, settings) {
+  const box = document.getElementById('splitMessagesBox');
+  if (!box || !splitTarget) return;
+  document.getElementById('splitChatTitle').textContent = `◫ ${splitTarget.name}`;
+  const msgs = (history[splitTarget.id] || []).slice(-60);
+  box.innerHTML = '';
+  msgs.forEach(m => {
+    const div = document.createElement('div');
+    div.className = `message ${m.self ? 'sent' : 'received'}`;
+    div.innerHTML = `<div>${formatMessageText(m.text || '[Attachment]', settings)}</div>`;
+    box.appendChild(div);
+  });
+  box.scrollTop = box.scrollHeight;
+}
 
+// --- Sending Messages, Slash Commands, Polls, Attachments & Clipboard Paste ---
+function handleSendMessage(customInputId = 'msgInput', targetOverride = null) {
+  const input = document.getElementById(customInputId);
+  let text = input ? input.value.trim() : '';
+  const target = targetOverride || activeTarget;
+  if (!text || !target) return;
+
+  // Fun Slash Commands
   if (text.toLowerCase() === '/flip') { document.body.classList.toggle('flip-mode'); input.value = ''; return; }
   if (text.toLowerCase() === '/matrix') { updateSetting('theme', 'matrix'); input.value = ''; return; }
   if (text.toLowerCase() === '/party') {
     input.value = '';
-    const colors = ['cyber-dark', 'emerald', 'purple', 'crimson', 'sunset', 'pro-obsidian'];
+    const cols = ['cyber-dark', 'emerald', 'purple', 'crimson', 'sunset', 'pro-obsidian'];
     let i = 0;
-    const partyTimer = setInterval(() => {
-      document.documentElement.setAttribute('data-theme', colors[i % colors.length]);
-      i++;
-      if (i > 12) { clearInterval(partyTimer); loadSettingsAndTheme(); }
+    const t = setInterval(() => {
+      document.documentElement.setAttribute('data-theme', cols[i++ % cols.length]);
+      if (i > 12) { clearInterval(t); loadSettingsAndTheme(); }
     }, 180);
     return;
+  }
+
+  // Mini-game: Rock-Paper-Scissors (#64)
+  if (text.toLowerCase().startsWith('/rps ')) {
+    const choice = text.slice(5).trim().toLowerCase();
+    const moves = ['rock', 'paper', 'scissors'];
+    if (moves.includes(choice)) {
+      const botMove = moves[Math.floor(Math.random() * 3)];
+      const win = (choice === 'rock' && botMove === 'scissors') || (choice === 'paper' && botMove === 'rock') || (choice === 'scissors' && botMove === 'paper');
+      const outcome = choice === botMove ? 'Tie!' : win ? 'You Win! 🎉' : 'You Lose! 💀';
+      text = `🎮 **RPS Challenge:** Played **${choice.toUpperCase()}** vs **${botMove.toUpperCase()}** → **${outcome}**`;
+    }
+  }
+
+  // Quick Poll Command (#20)
+  if (text.toLowerCase().startsWith('/poll ')) {
+    const parts = text.slice(6).split('|').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      input.value = '';
+      sendRichMessage(target, {
+        text: '',
+        poll: { question: parts[0], options: parts.slice(1).map(label => ({ label, votes: [] })) }
+      });
+      return;
+    }
   }
 
   let isTts = false;
   if (text.toLowerCase().startsWith('/tts ')) {
     isTts = true;
     text = text.slice(5).trim();
-    speakText(text);
+    if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
   }
 
-  if (!activeTarget || !text) return;
-
-  const matchedBan = BANNED_PHRASES.find(phrase => text.includes(phrase));
+  const matchedBan = BANNED_PHRASES.find(p => text.includes(p));
   if (matchedBan) {
     input.value = '';
-    const warnUrl = getAssetUrl(`warning.html?term=${encodeURIComponent(matchedBan)}`);
-    if (!IS_WEB_HOSTED && chrome?.tabs?.create) chrome.tabs.create({ url: warnUrl });
-    else window.open(warnUrl, '_blank');
+    window.open(getAssetUrl(`warning.html?term=${encodeURIComponent(matchedBan)}`), '_blank');
     return;
   }
 
+  input.value = '';
+  document.getElementById('slashMenu').style.display = 'none';
+  dispatchDirectOrGroupText(target, text, activeChannelId, isTts);
+}
+
+function dispatchDirectOrGroupText(target, text, channelId = 'general', isTts = false) {
   getState(['pulse_settings', 'pulse_groups'], (res) => {
     const settings = res.pulse_settings || {};
     const groups = res.pulse_groups || [];
-    const guildTag = (settings.equippedTag || '').toUpperCase();
 
-    if (activeTarget.type === 'group') {
-      const grp = groups.find(g => g.id === activeTarget.id);
-      if (grp && Array.isArray(grp.autoModWords)) {
-        const hit = grp.autoModWords.find(w => w && text.toLowerCase().includes(w.toLowerCase()));
-        if (hit) {
-          alert(`🛡️ AutoMod blocked your message because it matched the server's restricted keyword: "${hit}"`);
-          return;
+    if (target.type === 'group') {
+      const grp = groups.find(g => g.id === target.id);
+      if (grp) {
+        // Announcement Channel Check (#45)
+        const ch = (grp.channels || []).find(c => c.id === channelId);
+        if (ch && ch.type === 'announcement' && grp.admin !== myCode) {
+          return alert('📢 Only the server owner can post in Announcement channels!');
+        }
+        // Slowmode Check (#22)
+        if (grp.slowmodeSec > 0 && grp.admin !== myCode) {
+          const waitLeft = Math.ceil((grp.slowmodeSec * 1000 - (Date.now() - lastMessageSentAt)) / 1000);
+          if (waitLeft > 0) return alert(`⏳ Slowmode active! Please wait ${waitLeft}s.`);
+        }
+        // AutoMod Check
+        if (Array.isArray(grp.autoModWords)) {
+          const hit = grp.autoModWords.find(w => w && text.toLowerCase().includes(w.toLowerCase()));
+          if (hit) return alert(`🛡️ AutoMod blocked restricted word: "${hit}"`);
         }
       }
     }
 
-    const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
-    const msgObj = { id: msgId, sender: myCode, guildTag, text, time: Date.now(), self: true, status: 'Sent' };
+    lastMessageSentAt = Date.now();
+    sendRichMessage(target, { text, tts: isTts }, channelId);
+  });
+}
 
-    if (activeTarget.type === 'dm') {
-      const sent = sendPayloadToCode(activeTarget.id, { type: 'DM', msgId, text, guildTag, tts: isTts });
+function sendRichMessage(target, extraFields, channelId = 'general') {
+  getState(['pulse_settings'], (res) => {
+    const guildTag = ((res.pulse_settings || {}).equippedTag || '').toUpperCase();
+    const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
+    const replySnapshot = replyingToMsg ? { ...replyingToMsg } : null;
+    replyingToMsg = null;
+    if (document.getElementById('replyPreviewBar')) document.getElementById('replyPreviewBar').style.display = 'none';
+
+    const msgObj = {
+      id: msgId,
+      sender: target.type === 'group' ? 'You' : myCode,
+      guildTag,
+      time: Date.now(),
+      self: true,
+      status: 'Sent',
+      replyTo: replySnapshot,
+      ...extraFields
+    };
+
+    if (target.type === 'dm') {
+      const sent = sendPayloadToCode(target.id, { type: 'DM', msgId, guildTag, replyTo: replySnapshot, ...extraFields });
       msgObj.status = sent ? 'Sent' : 'Queued';
-      saveMessageToHistory(activeTarget.id, msgObj);
-    } else if (activeTarget.type === 'group') {
-      msgObj.sender = 'You';
-      saveMessageToHistory(activeTarget.id, msgObj);
-      (activeTarget.members || []).forEach(mc => {
+      saveMessageToHistory(target.id, msgObj);
+    } else if (target.type === 'group') {
+      const storeKey = channelId && channelId !== 'general' ? `${target.id}:${channelId}` : target.id;
+      saveMessageToHistory(storeKey, msgObj);
+      (target.members || []).forEach(mc => {
         if (mc !== myCode) {
           sendPayloadToCode(mc, {
             type: 'GROUP_MSG',
             msgId,
-            groupId: activeTarget.id,
-            groupName: activeTarget.name,
-            members: activeTarget.members,
+            groupId: target.id,
+            groupName: target.name,
+            channelId,
+            members: target.members,
             senderName: myCode,
             guildTag,
-            text
+            replyTo: replySnapshot,
+            ...extraFields
           });
         }
       });
     }
+  });
+}
 
-    input.value = '';
+// --- Custom Sticker & Meme Maker (Replaces GIF Search) ---
+function initMemeMaker() {
+  const canvas = document.getElementById('memeCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let loadedImg = null;
+
+  const redrawMeme = () => {
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (loadedImg) ctx.drawImage(loadedImg, 0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 4;
+    ctx.font = 'bold 24px Impact, sans-serif';
+    ctx.textAlign = 'center';
+    const top = (document.getElementById('memeTopText')?.value || '').toUpperCase();
+    const bot = (document.getElementById('memeBottomText')?.value || '').toUpperCase();
+    if (top) { ctx.strokeText(top, canvas.width / 2, 32); ctx.fillText(top, canvas.width / 2, 32); }
+    if (bot) { ctx.strokeText(bot, canvas.width / 2, canvas.height - 14); ctx.fillText(bot, canvas.width / 2, canvas.height - 14); }
+  };
+
+  document.getElementById('memeImageUpload')?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => { loadedImg = img; redrawMeme(); };
+    img.src = URL.createObjectURL(file);
+  });
+  document.getElementById('memeTopText')?.addEventListener('input', redrawMeme);
+  document.getElementById('memeBottomText')?.addEventListener('input', redrawMeme);
+
+  document.getElementById('saveStickerBtn')?.addEventListener('click', () => {
+    const dataUrl = canvas.toDataURL('image/webp', 0.75);
+    getState(['pulse_stickers'], (res) => {
+      const list = res.pulse_stickers || [];
+      list.unshift(dataUrl);
+      setState({ pulse_stickers: list.slice(0, 24) }, () => alert('🎨 Sticker saved to your Pulse Pro Sticker Tray!'));
+    });
+  });
+
+  document.getElementById('sendStickerNowBtn')?.addEventListener('click', () => {
+    if (!activeTarget) return alert('Select a chat first!');
+    const dataUrl = canvas.toDataURL('image/webp', 0.75);
+    sendRichMessage(activeTarget, { text: '', image: dataUrl }, activeChannelId);
+    document.getElementById('stickerMakerModal').style.display = 'none';
+  });
+}
+
+// --- Live Collaborative Whiteboard (Replaces Link Previews) ---
+function initWhiteboard() {
+  const canvas = document.getElementById('whiteboardCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  let lastX = 0, lastY = 0;
+
+  const drawSegment = (x1, y1, x2, y2, color, size) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    drawing = true;
+    const r = canvas.getBoundingClientRect();
+    lastX = e.clientX - r.left;
+    lastY = e.clientY - r.top;
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drawing) return;
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const color = document.getElementById('wbColorPicker').value;
+    const size = parseInt(document.getElementById('wbBrushSize').value, 10);
+    drawSegment(lastX, lastY, x, y, color, size);
+
+    if (activeTarget) {
+      const stroke = { type: 'WB_STROKE', x1: lastX, y1: lastY, x2: x, y2: y, color, size };
+      if (activeTarget.type === 'dm') sendPayloadToCode(activeTarget.id, stroke);
+      else (activeTarget.members || []).forEach(mc => { if (mc !== myCode) sendPayloadToCode(mc, stroke); });
+    }
+    lastX = x; lastY = y;
+  });
+
+  window.addEventListener('pointerup', () => { drawing = false; });
+  document.getElementById('wbClearBtn')?.addEventListener('click', () => ctx.clearRect(0, 0, canvas.width, canvas.height));
+
+  window.drawRemoteStroke = (s) => {
+    drawSegment(s.x1, s.y1, s.x2, s.y2, s.color, s.size);
+  };
+}
+
+// --- Calls, PiP (#52), Camera Switch (#56), Watch Together (#60) & Nerd Stats (#54/#62) ---
+function startVoiceOrVideoCall() {
+  if (!activeTarget) return;
+  playSound(callingAudio);
+  getMediaStreamWithFallback((stream) => {
+    localStream = stream;
+    document.getElementById('localVideo').srcObject = stream;
+    document.getElementById('mediaArea').style.display = 'flex';
+    startCallTimersAndNerdStats(stream);
+
+    const targets = activeTarget.type === 'dm' ? [activeTarget.id] : (activeTarget.members || []).filter(m => m !== myCode);
+    targets.forEach(code => {
+      const call = peer.call(`pulse-ws-${code}`, stream);
+      currentCall = call;
+      call.on('stream', (rem) => {
+        stopCallAudio();
+        const remVid = document.getElementById('remoteVideo');
+        remVid.srcObject = rem;
+        document.getElementById('remoteVideoLabel').textContent = code;
+      });
+      call.on('close', endActiveCall);
+    });
+  });
+}
+
+function startCallTimersAndNerdStats(stream) {
+  callSeconds = 0;
+  clearInterval(callDurationTimer);
+  callDurationTimer = setInterval(() => {
+    callSeconds++;
+    const el = document.getElementById('callTimerText');
+    if (el) el.textContent = `${String(Math.floor(callSeconds / 60)).padStart(2, '0')}:${String(callSeconds % 60).padStart(2, '0')}`;
+  }, 1000);
+
+  // Mic Level Meter & WebRTC RTT/Bitrate Stats (#54, #62)
+  try {
+    const audioCtx = new AudioContext();
+    const analyser = audioCtx.createAnalyser();
+    const src = audioCtx.createMediaStreamSource(stream);
+    src.connect(analyser);
+    const dataArr = new Uint8Array(analyser.frequencyBinCount);
+
+    clearInterval(nerdStatsTimer);
+    nerdStatsTimer = setInterval(async () => {
+      analyser.getByteFrequencyData(dataArr);
+      const avg = dataArr.reduce((a, b) => a + b, 0) / dataArr.length;
+      const meter = document.getElementById('micLevelMeter');
+      if (meter) meter.value = Math.min(100, Math.round(avg * 2));
+
+      if (currentCall && currentCall.peerConnection) {
+        const stats = await currentCall.peerConnection.getStats();
+        let rtt = '--';
+        stats.forEach(report => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime) {
+            rtt = Math.round(report.currentRoundTripTime * 1000);
+          }
+        });
+        const readout = document.getElementById('webrtcStatsReadout');
+        if (readout) readout.textContent = `RTT: ${rtt} ms | Duration: ${callSeconds}s | ICE: Connected`;
+      }
+    }, 800);
+  } catch (e) {}
+}
+
+function endActiveCall() {
+  stopCallAudio();
+  stopScreenShare();
+  clearInterval(callDurationTimer);
+  clearInterval(nerdStatsTimer);
+  document.getElementById('mediaArea').style.display = 'none';
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  if (currentCall) try { currentCall.close(); } catch (e) {}
+}
+
+function applyRemoteYtSync(payload) {
+  const box = document.getElementById('watchTogetherBox');
+  const frame = document.getElementById('ytSyncFrame');
+  if (!box || !frame) return;
+  box.style.display = 'block';
+  frame.style.display = 'block';
+  frame.src = `https://www.youtube.com/embed/${payload.videoId}?autoplay=1`;
+}
+
+// --- Settings, Theme Marketplace (#80) & Custom CSS (#79) ---
+function renderThemeMarketplace() {
+  const grid = document.getElementById('themeMarketplaceGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  MARKETPLACE_THEMES.forEach(t => {
+    const card = document.createElement('div');
+    card.className = 'setting-row';
+    card.style.flexDirection = 'column';
+    card.style.alignItems = 'flex-start';
+    card.innerHTML = `
+      <div><strong>${t.name}</strong> <span style="font-size:0.7rem; color:var(--muted);">by ${t.author}</span></div>
+      <div style="font-size:0.75rem; color:var(--muted); margin:4px 0 8px;">${t.desc}</div>
+      <button class="btn-success" style="padding:4px 10px; font-size:0.75rem;">Install Theme</button>
+    `;
+    card.querySelector('button').onclick = () => updateSetting('theme', t.id);
+    grid.appendChild(card);
   });
 }
 
 function loadSettingsAndTheme() {
-  getState(['pulse_settings'], (res) => {
+  getState(['pulse_settings', 'pulse_custom_css'], (res) => {
     const s = res.pulse_settings || {};
     document.documentElement.setAttribute('data-theme', s.theme || 'discord-dark');
-    document.documentElement.style.setProperty('--ui-saturation', `${s.saturation || 100}%`);
-    document.body.style.fontFamily = s.fontFamily || 'system-ui, sans-serif';
-    document.body.style.setProperty('--font-size', s.fontSize || '15px');
-    document.body.style.setProperty('--msg-gap', s.msgGap || '10px');
-
-    document.body.classList.toggle('no-animations', !!s.noAnimations);
-    document.body.classList.toggle('high-contrast', !!s.highContrast);
-    document.body.classList.toggle('compact-mode', s.msgDensity === 'compact');
-
+    if (document.getElementById('customUserCss')) {
+      document.getElementById('customUserCss').textContent = s.devMode ? (res.pulse_custom_css || '') : '';
+    }
+    if (document.getElementById('customCssInput')) document.getElementById('customCssInput').value = res.pulse_custom_css || '';
     if (document.getElementById('footerDisplayName')) document.getElementById('footerDisplayName').textContent = s.displayName || 'User';
-    if (document.getElementById('footerAvatar')) document.getElementById('footerAvatar').textContent = s.avatarEmoji || '👤';
+    if (document.getElementById('footerAvatar')) document.getElementById('footerAvatar').textContent = s.avatarEmoji || '😎';
     if (document.getElementById('footerCustomActivity')) document.getElementById('footerCustomActivity').textContent = s.customActivity || 'Ready to chat';
+    if (document.getElementById('quickStatusSelect')) document.getElementById('quickStatusSelect').value = s.status || 'online';
 
     const tagEl = document.getElementById('footerGuildTag');
     if (tagEl) {
@@ -1521,44 +1733,23 @@ function loadSettingsAndTheme() {
       tagEl.style.display = s.equippedTag ? 'inline-block' : 'none';
     }
 
-    const hypeBadge = document.getElementById('footerHypeBadge');
-    if (hypeBadge) {
-      hypeBadge.textContent = s.hypeSquad || '';
-      hypeBadge.style.display = s.hypeSquad ? 'inline-block' : 'none';
-    }
-
     const sendBtn = document.getElementById('sendBtn');
     if (sendBtn) sendBtn.style.display = s.showSendBtn === false ? 'none' : 'inline-block';
 
-    const setVal = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.value = val; };
-    const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
-
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
+    const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
     setVal('themeSelect', s.theme || 'discord-dark');
     setVal('setDisplayName', s.displayName || '');
-    setVal('setUsername', s.username || '');
-    setVal('setCustomActivity', s.customActivity || '');
     setVal('setAvatarEmoji', s.avatarEmoji || '😎');
+    setVal('setCustomActivity', s.customActivity || '');
     setVal('setEquippedTag', s.equippedTag || '');
-    setVal('setPronouns', s.pronouns || '');
-    setVal('setBio', s.bio || '');
-    setVal('setCustomTyping', s.customTyping || '');
+    setVal('setBirthday', s.birthday || '');
     setVal('setDmFilter', s.dmFilter || 'requests');
-    setVal('setMsgDensity', s.msgDensity || 'cozy');
-    setVal('setFontFamily', s.fontFamily || 'system-ui');
-    setVal('setFontSize', s.fontSize || '15px');
-    setVal('setMsgGap', s.msgGap || '10px');
-    setVal('setSaturation', s.saturation || 100);
-    setVal('setTtsRate', s.ttsRate || 1.0);
-    setVal('setSpoilerMode', s.spoilerMode || 'click');
-
-    setChk('setHighContrast', s.highContrast);
-    setChk('setNoAnimations', s.noAnimations);
     setChk('setShowSendBtn', s.showSendBtn !== false);
-    setChk('setAllowTts', s.allowTts !== false);
-    setChk('setShowReactions', s.showReactions !== false);
     setChk('setAutoEmoji', s.autoEmoji !== false);
-    setChk('setStreamerMode', s.streamerMode);
+    setChk('setAllowTts', s.allowTts !== false);
     setChk('setDevMode', s.devMode);
+    setChk('setStreamerMode', s.streamerMode);
   });
 }
 
@@ -1568,53 +1759,231 @@ function updateSetting(key, val) {
     s[key] = val;
     setState({ pulse_settings: s }, () => {
       loadSettingsAndTheme();
+      broadcastPresence();
       scheduleRefresh(true);
     });
   });
 }
 
+// --- Bind All UI Events ---
 function bindUIEvents() {
-  document.getElementById('openWorkspaceBtn')?.addEventListener('click', openWorkspaceTab);
-  document.getElementById('copyCodeBtn')?.addEventListener('click', () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); });
-  document.getElementById('archiveBtn')?.addEventListener('click', () => archiveOldHistory(true));
-  document.getElementById('sendBtn')?.addEventListener('click', () => handleSendMessage('msgInput'));
-  document.getElementById('popupSendBtn')?.addEventListener('click', () => handleSendMessage('popupMsgInput'));
+  // Rail Navigation
+  document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
+  document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP SERVERS', '+ Group', promptCreateGroup);
+  document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
+  document.getElementById('railQueue').onclick = (e) => setActiveRail(e.currentTarget, 'OUTBOX QUEUE', 'Retry All', flushOfflineQueue);
+  document.getElementById('railStickers').onclick = () => { document.getElementById('stickerMakerModal').style.display = 'flex'; };
+  document.getElementById('railWhiteboard').onclick = () => { document.getElementById('whiteboardModal').style.display = 'flex'; };
+  document.getElementById('railWhatsNew').onclick = openWhatsNewModal;
+  document.getElementById('railShortcuts').onclick = openShortcutsModal;
+  document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
+  document.getElementById('sidebarActionBtn').onclick = promptAddFriend;
 
-  document.querySelectorAll('button').forEach(btn => {
-    const label = btn.textContent.trim();
-    if (label === '+ Add' && !btn.onclick) btn.addEventListener('click', promptAddFriend);
-    if (label === '+ Group' && !btn.onclick) btn.addEventListener('click', promptCreateGroup);
-    if (label === 'Copy' && !btn.onclick) btn.addEventListener('click', () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); });
-    if (label === '☁️' && !btn.onclick) btn.addEventListener('click', () => archiveOldHistory(true));
-    if (label === 'Send' && !btn.onclick) btn.addEventListener('click', () => handleSendMessage());
-    if ((label.includes('Full') || label.includes('Workspace')) && !btn.onclick) btn.addEventListener('click', openWorkspaceTab);
-    if (label === '⚙️' && !btn.onclick) btn.addEventListener('click', () => {
-      const overlay = document.getElementById('settingsOverlay');
-      if (overlay) { overlay.style.display = 'flex'; updateProUI(); }
-      else openWorkspaceTab();
+  document.getElementById('copyCodeBtn').onclick = () => { navigator.clipboard.writeText(myCode); alert('Copied: ' + myCode); };
+  document.getElementById('archiveBtn').onclick = () => archiveOldHistory(true);
+  document.getElementById('quickStatusSelect').onchange = (e) => updateSetting('status', e.target.value);
+
+  // PIN Unlock (#77)
+  document.getElementById('unlockPinBtn').onclick = () => {
+    getState(['pulse_app_pin'], (res) => {
+      if (document.getElementById('unlockPinInput').value === res.pulse_app_pin) {
+        document.getElementById('pinLockOverlay').style.display = 'none';
+      } else {
+        alert('Incorrect PIN!');
+      }
     });
+  };
+  document.getElementById('saveAppPinBtn').onclick = () => {
+    checkProAccess(({ hasPro }) => {
+      if (!hasPro) return alert('⭐ App Lock PIN is a Pulse Pro feature!');
+      const pin = document.getElementById('setAppPinInput').value.trim();
+      if (pin && pin.length !== 4) return alert('Enter a 4-digit PIN (or leave blank to disable).');
+      setState({ pulse_app_pin: pin }, () => alert(pin ? '🔒 App Lock PIN enabled!' : '🔓 App Lock PIN disabled.'));
+    });
+  };
+
+  // Composer & Attachments (#17, #18, #5, #15, #20)
+  document.getElementById('sendBtn').onclick = () => handleSendMessage('msgInput');
+  const msgInput = document.getElementById('msgInput');
+  msgInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage('msgInput'); }
+  });
+  msgInput.addEventListener('input', () => {
+    const val = msgInput.value;
+    const menu = document.getElementById('slashMenu');
+    if (val.startsWith('/')) {
+      const matches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(val.toLowerCase()));
+      if (matches.length > 0) {
+        menu.style.display = 'block';
+        menu.innerHTML = matches.map(m => `<div class="slash-item" data-cmd="${m.cmd}"><strong>${m.cmd}</strong> — <span style="opacity:0.8;">${m.desc}</span></div>`).join('');
+        menu.querySelectorAll('.slash-item').forEach(el => {
+          el.onclick = () => { msgInput.value = el.dataset.cmd; menu.style.display = 'none'; msgInput.focus(); };
+        });
+      } else menu.style.display = 'none';
+    } else menu.style.display = 'none';
   });
 
-  if (IS_POPUP) {
-    document.getElementById('addFriendBtn')?.addEventListener('click', promptAddFriend);
-    document.getElementById('createGroupBtn')?.addEventListener('click', promptCreateGroup);
-    document.getElementById('popupCallBtn')?.addEventListener('click', openWorkspaceTab);
-    const popInp = document.getElementById('popupMsgInput') || document.getElementById('msgInput');
-    if (popInp) {
-      popInp.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(popInp.id); }
+  // Clipboard Image Paste (#18)
+  msgInput.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items || [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = () => { if (activeTarget) sendRichMessage(activeTarget, { text: '', image: reader.result }, activeChannelId); };
+        reader.readAsDataURL(file);
+      }
+    }
+  });
+
+  // File / Image Attachment (#17)
+  document.getElementById('fileAttachInput').onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file || !activeTarget) return;
+    if (file.size > 3000000) return alert('Please keep P2P files under 3 MB.');
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (file.type.startsWith('image/')) sendRichMessage(activeTarget, { text: '', image: reader.result }, activeChannelId);
+      else sendRichMessage(activeTarget, { text: '', fileName: file.name, fileData: reader.result }, activeChannelId);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Pulse Pro Emoji & Sticker Picker (#5)
+  document.getElementById('emojiPickerBtn').onclick = () => {
+    checkProAccess(({ hasPro }) => {
+      document.getElementById('proEmojiLockNotice').style.display = hasPro ? 'none' : 'block';
+      const grid = document.getElementById('emojiGridBox');
+      grid.innerHTML = '';
+      EMOJI_LIST.forEach((em, idx) => {
+        const span = document.createElement('span');
+        span.style.cursor = 'pointer';
+        span.textContent = (!hasPro && idx >= 8) ? '🔒' : em;
+        span.onclick = () => {
+          if (!hasPro && idx >= 8) return alert('⭐ Upgrade to Pulse Pro (or 3-Day Trial) for the full Emoji & Sticker Tray!');
+          msgInput.value += em;
+          document.getElementById('emojiStickerModal').style.display = 'none';
+          msgInput.focus();
+        };
+        grid.appendChild(span);
+      });
+
+      getState(['pulse_stickers'], (res) => {
+        const sGrid = document.getElementById('savedStickersGrid');
+        sGrid.innerHTML = '';
+        (res.pulse_stickers || []).forEach(dataUrl => {
+          const img = document.createElement('img');
+          img.src = dataUrl;
+          img.style.cssText = 'width:100%; border-radius:8px; cursor:pointer; border:1px solid var(--border);';
+          img.onclick = () => {
+            if (!hasPro) return alert('⭐ Custom Stickers require Pulse Pro!');
+            if (activeTarget) sendRichMessage(activeTarget, { text: '', image: dataUrl }, activeChannelId);
+            document.getElementById('emojiStickerModal').style.display = 'none';
+          };
+          sGrid.appendChild(img);
+        });
+      });
+
+      document.getElementById('emojiStickerModal').style.display = 'flex';
+    });
+  };
+
+  // Schedule Message (#15) & Poll Button (#20)
+  document.getElementById('scheduleMsgBtn').onclick = () => {
+    if (!activeTarget) return;
+    const text = prompt('Message text to schedule:');
+    if (!text) return;
+    const mins = parseInt(prompt('Send in how many minutes?', '5') || '0', 10);
+    if (mins > 0) {
+      getState(['pulse_scheduled'], (res) => {
+        const list = res.pulse_scheduled || [];
+        list.push({ target: activeTarget, text, channelId: activeChannelId, sendAt: Date.now() + mins * 60000 });
+        setState({ pulse_scheduled: list }, () => alert(`⏰ Scheduled to send in ${mins} minute(s)!`));
       });
     }
-    return;
-  }
+  };
 
-  document.getElementById('addGroupMemberBtn')?.addEventListener('click', openGroupMemberAdder);
-  document.getElementById('groupSettingsBtn')?.addEventListener('click', openGroupSettingsDrawer);
-  document.getElementById('headerBoostBtn')?.addEventListener('click', () => boostActiveGroup(1));
-  document.getElementById('boostThisGroupBtn')?.addEventListener('click', () => boostActiveGroup(1));
-  document.getElementById('unboostThisGroupBtn')?.addEventListener('click', () => boostActiveGroup(-1));
-  document.getElementById('closeGroupMemberModal')?.addEventListener('click', () => { document.getElementById('groupMemberModal').style.display = 'none'; });
-  document.getElementById('closeGroupSettingsBtn')?.addEventListener('click', () => { document.getElementById('groupSettingsOverlay').style.display = 'none'; });
+  document.getElementById('createPollBtn').onclick = () => {
+    if (!activeTarget) return;
+    const q = prompt('Poll Question:');
+    if (!q) return;
+    const opts = (prompt('Options separated by commas (e.g. Yes, No, Maybe):') || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (opts.length >= 2) {
+      sendRichMessage(activeTarget, { text: '', poll: { question: q, options: opts.map(label => ({ label, votes: [] })) } }, activeChannelId);
+    }
+  };
+
+  document.getElementById('cancelReplyBtn').onclick = () => {
+    replyingToMsg = null;
+    document.getElementById('replyPreviewBar').style.display = 'none';
+  };
+  document.getElementById('unpinMsgBtn').onclick = () => {
+    const key = getActiveHistoryKey();
+    if (key) setPinnedMessage(key, null, true);
+  };
+
+  // Split Screen (#85), Friend Info (#28/#29/#36), Member Drawer (#44)
+  document.getElementById('splitScreenBtn').onclick = () => {
+    if (!activeTarget) return;
+    splitTarget = { ...activeTarget };
+    document.getElementById('splitChatPane').style.display = 'flex';
+    scheduleRefresh(true);
+  };
+  document.getElementById('closeSplitBtn').onclick = () => {
+    splitTarget = null;
+    document.getElementById('splitChatPane').style.display = 'none';
+  };
+  document.getElementById('splitSendBtn').onclick = () => handleSendMessage('splitMsgInput', splitTarget);
+
+  document.getElementById('profileInspectBtn').onclick = () => {
+    if (!activeTarget || activeTarget.type !== 'dm') return;
+    getState(['pulse_friend_meta', 'pulse_groups'], (res) => {
+      const meta = (res.pulse_friend_meta || {})[activeTarget.id] || {};
+      document.getElementById('friendInfoTitle').textContent = `👤 ${activeTarget.name} (${activeTarget.id})`;
+      document.getElementById('friendCustomNick').value = meta.nickname || '';
+      document.getElementById('friendPrivateNote').value = meta.note || '';
+      document.getElementById('friendMuteToggle').checked = !!meta.muted;
+      const mutuals = (res.pulse_groups || []).filter(g => (g.members || []).includes(activeTarget.id)).map(g => g.name);
+      document.getElementById('friendMutualGroups').textContent = mutuals.length ? mutuals.join(', ') : 'None';
+      document.getElementById('friendInfoModal').style.display = 'flex';
+    });
+  };
+  document.getElementById('saveFriendInfoBtn').onclick = () => {
+    if (!activeTarget) return;
+    getState(['pulse_friend_meta'], (res) => {
+      const all = res.pulse_friend_meta || {};
+      all[activeTarget.id] = {
+        nickname: document.getElementById('friendCustomNick').value.trim(),
+        note: document.getElementById('friendPrivateNote').value.trim(),
+        muted: document.getElementById('friendMuteToggle').checked
+      };
+      setState({ pulse_friend_meta: all }, () => {
+        document.getElementById('friendInfoModal').style.display = 'none';
+        scheduleRefresh(true);
+      });
+    });
+  };
+
+  document.getElementById('toggleMembersBtn').onclick = () => {
+    const drawer = document.getElementById('groupMemberDrawer');
+    if (drawer.style.display === 'flex') { drawer.style.display = 'none'; return; }
+    drawer.style.display = 'flex';
+    drawer.innerHTML = '<strong>MEMBERS</strong>';
+    (activeTarget?.members || []).forEach(mc => {
+      const online = mc === myCode || !!liveConns[mc]?.open;
+      const row = document.createElement('div');
+      row.style.fontSize = '0.8rem';
+      row.innerHTML = `<span style="color:${online ? '#10b981' : '#64748b'};">●</span> ${mc}`;
+      drawer.appendChild(row);
+    });
+  };
+
+  // Group Settings & Channels (#40, #41, #42, #49, #50, #97)
+  document.getElementById('addGroupMemberBtn').onclick = openGroupMemberAdder;
+  document.getElementById('headerBoostBtn').onclick = () => boostActiveGroup(1);
+  document.getElementById('boostThisGroupBtn').onclick = () => boostActiveGroup(1);
+  document.getElementById('unboostThisGroupBtn').onclick = () => boostActiveGroup(-1);
+  document.getElementById('groupSettingsBtn').onclick = openGroupSettingsDrawer;
 
   document.querySelectorAll('.grp-tab').forEach(tab => {
     tab.onclick = () => {
@@ -1625,138 +1994,151 @@ function bindUIEvents() {
     };
   });
 
-  document.getElementById('saveGrpProfileBtn')?.addEventListener('click', () => {
-    if (!activeTarget || activeTarget.type !== 'group') return;
+  document.getElementById('saveGrpProfileBtn').onclick = () => {
     getState(['pulse_groups'], (res) => {
       const groups = res.pulse_groups || [];
-      const grp = groups.find(g => g.id === activeTarget.id);
+      const grp = groups.find(g => g.id === activeTarget?.id);
       if (!grp) return;
       grp.name = document.getElementById('grpEditName').value.trim() || grp.name;
       grp.icon = document.getElementById('grpEditIcon').value.trim() || '#';
-      grp.tag = document.getElementById('grpEditTag').value.trim().toUpperCase();
-      grp.description = document.getElementById('grpEditDesc').value.trim();
-      grp.bannerColor = document.getElementById('grpEditBanner').value;
-      grp.showBoostBar = document.getElementById('grpShowBoostBar').checked;
-      grp.perkTagEnabled = document.getElementById('grpPerkTagToggle').checked;
-      grp.perkHoloEnabled = document.getElementById('grpPerkHoloToggle').checked;
-      activeTarget.name = grp.name;
-      activeTarget.icon = grp.icon;
-      addAuditEntry(grp, 'updated Server Profile settings');
-      setState({ pulse_groups: groups }, () => { alert('✅ Server Profile Saved!'); scheduleRefresh(true); });
+      grp.slowmodeSec = parseInt(document.getElementById('grpSlowmodeSec').value || '0', 10);
+      grp.welcomeMsg = document.getElementById('grpWelcomeMsg').value.trim();
+      setState({ pulse_groups: groups }, () => { alert('✅ Server Overview Saved!'); scheduleRefresh(true); });
     });
-  });
+  };
 
-  document.getElementById('addRoleBtn')?.addEventListener('click', () => {
-    if (!activeTarget || activeTarget.type !== 'group') return;
-    const rName = document.getElementById('newRoleName').value.trim();
-    const rColor = document.getElementById('newRoleColor').value;
-    if (!rName) return;
+  document.getElementById('addChannelBtn').onclick = () => {
+    const name = document.getElementById('newChannelName').value.trim().toLowerCase().replace(/\s+/g, '-');
+    const type = document.getElementById('newChannelType').value;
+    if (!name) return;
     getState(['pulse_groups'], (res) => {
       const groups = res.pulse_groups || [];
-      const grp = groups.find(g => g.id === activeTarget.id);
+      const grp = groups.find(g => g.id === activeTarget?.id);
+      if (!grp) return;
+      if (!grp.channels) grp.channels = [{ id: 'general', name: 'general', type: 'text' }];
+      grp.channels.push({ id: 'ch-' + Date.now(), name, type });
+      document.getElementById('newChannelName').value = '';
+      setState({ pulse_groups: groups }, () => { openGroupSettingsDrawer(); scheduleRefresh(true); });
+    });
+  };
+
+  document.getElementById('addRoleBtn').onclick = () => {
+    const name = document.getElementById('newRoleName').value.trim();
+    const color = document.getElementById('newRoleColor').value;
+    const perm = document.getElementById('newRolePerm').value;
+    if (!name) return;
+    getState(['pulse_groups'], (res) => {
+      const groups = res.pulse_groups || [];
+      const grp = groups.find(g => g.id === activeTarget?.id);
       if (!grp) return;
       if (!grp.roles) grp.roles = [];
-      grp.roles.push({ name: rName, color: rColor });
-      addAuditEntry(grp, `created role "${rName}"`);
+      grp.roles.push({ name, color, perm });
       document.getElementById('newRoleName').value = '';
       setState({ pulse_groups: groups }, openGroupSettingsDrawer);
     });
-  });
+  };
 
-  document.getElementById('addGrpEmojiBtn')?.addEventListener('click', () => {
-    if (!activeTarget || activeTarget.type !== 'group') return;
-    const code = document.getElementById('grpEmojiCode').value.trim();
-    const char = document.getElementById('grpEmojiChar').value.trim();
-    if (!code || !char) return;
+  document.getElementById('saveAutoModBtn').onclick = () => {
     getState(['pulse_groups'], (res) => {
       const groups = res.pulse_groups || [];
-      const grp = groups.find(g => g.id === activeTarget.id);
-      if (!grp) return;
-      if (!grp.emojis) grp.emojis = [];
-      grp.emojis.push({ code: code.startsWith(':') ? code : `:${code}:`, char });
-      addAuditEntry(grp, `added custom emoji ${char}`);
-      document.getElementById('grpEmojiCode').value = '';
-      document.getElementById('grpEmojiChar').value = '';
-      setState({ pulse_groups: groups }, openGroupSettingsDrawer);
-    });
-  });
-
-  document.getElementById('saveAutoModBtn')?.addEventListener('click', () => {
-    if (!activeTarget || activeTarget.type !== 'group') return;
-    getState(['pulse_groups'], (res) => {
-      const groups = res.pulse_groups || [];
-      const grp = groups.find(g => g.id === activeTarget.id);
+      const grp = groups.find(g => g.id === activeTarget?.id);
       if (!grp) return;
       grp.autoModWords = document.getElementById('grpAutoModWords').value.split(',').map(w => w.trim()).filter(Boolean);
-      grp.rulesScreening = document.getElementById('grpRulesScreen').checked;
-      grp.rulesText = document.getElementById('grpRulesText').value.trim();
-      addAuditEntry(grp, 'updated AutoMod & Safety rules');
-      setState({ pulse_groups: groups }, () => { alert('🛡️ Safety & AutoMod Rules Saved!'); openGroupSettingsDrawer(); });
+      grp.notifOverride = document.getElementById('grpNotifOverride').value;
+      setState({ pulse_groups: groups }, () => alert('🛡️ Safety & Notification Rules Saved!'));
     });
-  });
+  };
 
-  document.getElementById('copyVanityBtn')?.addEventListener('click', () => {
-    const slug = document.getElementById('grpVanitySlug').value.trim() || activeTarget?.id;
-    navigator.clipboard.writeText(`https://iliketrains1382.github.io/pulse-chat/index.html?invite=${encodeURIComponent(slug)}`);
-    alert('🔗 Custom Invite Link Copied!');
-  });
-
-  document.getElementById('copyServerTemplateBtn')?.addEventListener('click', () => {
-    getState(['pulse_groups'], (res) => {
-      const grp = (res.pulse_groups || []).find(g => g.id === activeTarget?.id);
-      if (grp) {
-        navigator.clipboard.writeText(JSON.stringify({ name: grp.name, roles: grp.roles, autoModWords: grp.autoModWords }, null, 2));
-        alert('📋 Server Template JSON copied to clipboard!');
-      }
-    });
-  });
-
-  document.getElementById('copyGrpJoinCodeBtn')?.addEventListener('click', () => {
-    if (activeTarget) { navigator.clipboard.writeText(activeTarget.id); alert('Copied Group Invite ID: ' + activeTarget.id); }
-  });
-
-  document.getElementById('deleteGroupServerBtn')?.addEventListener('click', () => {
-    if (!activeTarget || activeTarget.type !== 'group') return;
-    const confirmName = prompt(`Type "${activeTarget.name}" to permanently delete this server:`);
-    if (confirmName !== activeTarget.name) return;
+  document.getElementById('leaveGroupBtn').onclick = () => {
+    if (!activeTarget || !confirm('Leave this group server?')) return;
     getState(['pulse_groups'], (res) => {
       const groups = (res.pulse_groups || []).filter(g => g.id !== activeTarget.id);
       activeTarget = null;
       document.getElementById('groupSettingsOverlay').style.display = 'none';
       setState({ pulse_groups: groups }, () => scheduleRefresh(true));
     });
-  });
+  };
 
-  document.getElementById('subMonthlyBtn')?.addEventListener('click', () => {
-    setState({ pulse_pro_sub: { active: true, plan: 'monthly', expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 } }, () => {
-      alert('⭐ Subscribed to Pulse Pro Monthly! 2 Group Boosts added to your account.');
-      updateProUI();
+  document.getElementById('deleteGroupServerBtn').onclick = () => {
+    if (!activeTarget || !confirm('Permanently delete this server?')) return;
+    getState(['pulse_groups'], (res) => {
+      const groups = (res.pulse_groups || []).filter(g => g.id !== activeTarget.id);
+      activeTarget = null;
+      document.getElementById('groupSettingsOverlay').style.display = 'none';
+      setState({ pulse_groups: groups }, () => scheduleRefresh(true));
     });
-  });
+  };
 
-  document.getElementById('subYearlyBtn')?.addEventListener('click', () => {
-    setState({ pulse_pro_sub: { active: true, plan: 'yearly', expiresAt: Date.now() + 365 * 24 * 60 * 60 * 1000 } }, () => {
-      alert('⭐ Subscribed to Pulse Pro Yearly! 2 Group Boosts added to your account.');
-      updateProUI();
-    });
-  });
-
-  document.getElementById('cancelSubBtn')?.addEventListener('click', () => {
-    if (confirm('Cancel your Pulse Pro subscription?')) {
-      setState({ pulse_pro_sub: { active: false, plan: 'free', expiresAt: 0 } }, () => {
-        updateProUI();
-      });
+  // Call Controls (#52 PiP, #54 Nerd Stats, #55 Vol, #56 Switch Cam, #60 Watch Together)
+  document.getElementById('wsCallBtn').onclick = startVoiceOrVideoCall;
+  document.getElementById('endCallBtn').onclick = endActiveCall;
+  document.getElementById('shareScreenBtn').onclick = toggleScreenShare;
+  document.getElementById('muteMicBtn').onclick = (e) => {
+    isMuted = !isMuted;
+    if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+    e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
+  };
+  document.getElementById('pipCallBtn').onclick = async () => {
+    const vid = document.getElementById('remoteVideo');
+    if (vid && document.pictureInPictureEnabled) await vid.requestPictureInPicture().catch(() => {});
+  };
+  document.getElementById('switchCamBtn').onclick = async () => {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter(d => d.kind === 'videoinput');
+    if (cams.length < 2) return alert('Only 1 camera detected.');
+    currentCamIndex = (currentCamIndex + 1) % cams.length;
+    const newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: cams[currentCamIndex].deviceId } } });
+    const newTrack = newStream.getVideoTracks()[0];
+    document.getElementById('localVideo').srcObject = newStream;
+    if (currentCall?.peerConnection) {
+      const sender = currentCall.peerConnection.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) sender.replaceTrack(newTrack);
     }
-  });
+  };
+  document.getElementById('peerCallVolSlider').oninput = (e) => {
+    const vid = document.getElementById('remoteVideo');
+    if (vid) vid.volume = Math.min(1, parseFloat(e.target.value));
+  };
+  document.getElementById('toggleNerdStatsBtn').onclick = () => {
+    const p = document.getElementById('nerdStatsPanel');
+    p.style.display = p.style.display === 'block' ? 'none' : 'block';
+  };
+  document.getElementById('toggleWatchBtn').onclick = () => {
+    const b = document.getElementById('watchTogetherBox');
+    b.style.display = b.style.display === 'block' ? 'none' : 'block';
+  };
+  document.getElementById('loadYtSyncBtn').onclick = () => {
+    const url = document.getElementById('ytSyncUrlInput').value.trim();
+    const match = url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+    if (!match) return alert('Paste a valid YouTube link!');
+    const payload = { type: 'YT_SYNC', videoId: match[1] };
+    applyRemoteYtSync(payload);
+    if (activeTarget?.type === 'dm') sendPayloadToCode(activeTarget.id, payload);
+    else (activeTarget?.members || []).forEach(mc => { if (mc !== myCode) sendPayloadToCode(mc, payload); });
+  };
+  document.getElementById('closeYtSyncBtn').onclick = () => { document.getElementById('watchTogetherBox').style.display = 'none'; };
 
-  if (document.getElementById('runArchiveNowBtn')) document.getElementById('runArchiveNowBtn').onclick = () => archiveOldHistory(true);
-  if (document.getElementById('railFriends')) document.getElementById('railFriends').onclick = (e) => setActiveRail(e.currentTarget, 'DIRECT MESSAGES', '+ Add', promptAddFriend);
-  if (document.getElementById('railGroups')) document.getElementById('railGroups').onclick = (e) => setActiveRail(e.currentTarget, 'GROUP SERVERS', '+ Group', promptCreateGroup);
-  if (document.getElementById('railRequests')) document.getElementById('railRequests').onclick = (e) => setActiveRail(e.currentTarget, 'REQUESTS', '', null);
-  if (document.getElementById('railSettings')) document.getElementById('railSettings').onclick = () => { document.getElementById('settingsOverlay').style.display = 'flex'; updateProUI(); };
-  if (document.getElementById('closeSettingsBtn')) document.getElementById('closeSettingsBtn').onclick = () => { document.getElementById('settingsOverlay').style.display = 'none'; };
-  if (document.getElementById('sidebarActionBtn')) document.getElementById('sidebarActionBtn').onclick = promptAddFriend;
+  document.getElementById('acceptCallBtn').onclick = () => {
+    stopCallAudio();
+    document.getElementById('callModal').style.display = 'none';
+    if (!currentCall) return;
+    getMediaStreamWithFallback((stream) => {
+      localStream = stream;
+      document.getElementById('localVideo').srcObject = stream;
+      document.getElementById('mediaArea').style.display = 'flex';
+      startCallTimersAndNerdStats(stream);
+      currentCall.answer(stream);
+      currentCall.on('stream', (rem) => { document.getElementById('remoteVideo').srcObject = rem; });
+      currentCall.on('close', endActiveCall);
+    });
+  };
+  document.getElementById('declineCallBtn').onclick = () => {
+    stopCallAudio();
+    document.getElementById('callModal').style.display = 'none';
+    if (currentCall) currentCall.close();
+  };
 
+  // User Settings & Custom CSS (#79)
   document.querySelectorAll('.settings-tab').forEach(tab => {
     tab.onclick = () => {
       document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
@@ -1766,174 +2148,59 @@ function bindUIEvents() {
     };
   });
 
-  if (document.getElementById('redeemCodeBtn')) {
-    document.getElementById('redeemCodeBtn').onclick = () => {
-      const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
-      if (VALID_GIFT_CODES.includes(code)) {
-        setState({ pulse_pro_permanent: true }, () => {
-          alert('🎉 Gift Card Redeemed! Lifetime Pulse Pro & 2 Group Boosts unlocked!');
-          updateProUI();
-        });
-      } else if (code.startsWith('PASS-')) {
-        setState({ pulse_trial_start: Date.now() }, () => {
-          alert('🎟️ 3-Day Friend Pass Activated! Pulse Pro & 2 Group Boosts unlocked for 72 hours.');
-          updateProUI();
-        });
-      } else {
-        alert('Invalid Gift Card or Pass Code. Please check the code and try again.');
-      }
-    };
-  }
+  document.getElementById('applyCustomCssBtn').onclick = () => {
+    getState(['pulse_settings'], (res) => {
+      if (!(res.pulse_settings || {}).devMode) return alert('Enable Developer Mode above first!');
+      const css = document.getElementById('customCssInput').value;
+      setState({ pulse_custom_css: css }, () => { loadSettingsAndTheme(); alert('🎨 Custom CSS Applied!'); });
+    });
+  };
 
-  if (document.getElementById('genFriendPassBtn')) {
-    document.getElementById('genFriendPassBtn').onclick = () => {
-      const pass = 'PASS-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-      navigator.clipboard.writeText(pass);
-      alert(`🎟️ Generated & Copied 3-Day Friend Pass: ${pass}`);
-    };
-  }
-
-  if (document.getElementById('exportDataPackageBtn')) {
-    document.getElementById('exportDataPackageBtn').onclick = () => {
-      getState(['pulse_settings', 'pulse_friends', 'pulse_groups', 'pulse_history'], (res) => {
-        const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `pulse-chat-data-package-${Date.now()}.json`;
-        a.click();
-      });
-    };
-  }
-
-  document.querySelectorAll('[data-hype]').forEach(btn => {
-    btn.onclick = () => updateSetting('hypeSquad', btn.dataset.hype);
-  });
-
-  if (document.getElementById('previewTtsBtn')) {
-    document.getElementById('previewTtsBtn').onclick = () => speakText('Pulse Chat Text to Speech is active and ready!');
-  }
+  document.getElementById('subMonthlyBtn').onclick = () => {
+    setState({ pulse_pro_sub: { active: true, plan: 'Monthly', expiresAt: Date.now() + 30 * 86400000 } }, () => { updateProUI(); alert('⭐ Pulse Pro Monthly Activated!'); });
+  };
+  document.getElementById('subYearlyBtn').onclick = () => {
+    setState({ pulse_pro_sub: { active: true, plan: 'Yearly', expiresAt: Date.now() + 365 * 86400000 } }, () => { updateProUI(); alert('⭐ Pulse Pro Yearly Activated!'); });
+  };
+  document.getElementById('redeemCodeBtn').onclick = () => {
+    const code = document.getElementById('giftCodeInput').value.trim().toUpperCase();
+    if (VALID_GIFT_CODES.includes(code)) {
+      setState({ pulse_pro_permanent: true }, () => { updateProUI(); alert('🎉 Lifetime Pulse Pro Unlocked!'); });
+    } else alert('Invalid Gift Code.');
+  };
 
   const bindVal = (id, key) => { const el = document.getElementById(id); if (el) el.onchange = (e) => updateSetting(key, e.target.value); };
   const bindChk = (id, key) => { const el = document.getElementById(id); if (el) el.onchange = (e) => updateSetting(key, e.target.checked); };
-
-  bindVal('setDisplayName', 'displayName');
-  bindVal('setUsername', 'username');
-  bindVal('setCustomActivity', 'customActivity');
-  bindVal('setAvatarEmoji', 'avatarEmoji');
-  bindVal('setEquippedTag', 'equippedTag');
-  bindVal('setPronouns', 'pronouns');
-  bindVal('setBio', 'bio');
-  bindVal('setCustomTyping', 'customTyping');
-  bindVal('setDmFilter', 'dmFilter');
   bindVal('themeSelect', 'theme');
-  bindVal('setMsgDensity', 'msgDensity');
-  bindVal('setFontFamily', 'fontFamily');
-  bindVal('setFontSize', 'fontSize');
-  bindVal('setMsgGap', 'msgGap');
-  bindVal('setSaturation', 'saturation');
-  bindVal('setTtsRate', 'ttsRate');
-  bindVal('setSpoilerMode', 'spoilerMode');
-  bindVal('setRenderLimit', 'renderLimit');
+  bindVal('setDisplayName', 'displayName');
+  bindVal('setAvatarEmoji', 'avatarEmoji');
+  bindVal('setCustomActivity', 'customActivity');
+  bindVal('setEquippedTag', 'equippedTag');
+  bindVal('setBirthday', 'birthday');
+  bindVal('setDmFilter', 'dmFilter');
   bindVal('micDeviceSelect', 'micDeviceId');
-
-  bindChk('setHighContrast', 'highContrast');
-  bindChk('setNoAnimations', 'noAnimations');
   bindChk('setShowSendBtn', 'showSendBtn');
-  bindChk('setAllowTts', 'allowTts');
-  bindChk('setShowReactions', 'showReactions');
   bindChk('setAutoEmoji', 'autoEmoji');
-  bindChk('setStreamerMode', 'streamerMode');
+  bindChk('setAllowTts', 'allowTts');
   bindChk('setDevMode', 'devMode');
+  bindChk('setStreamerMode', 'streamerMode');
   bindChk('setEcho', 'echo');
   bindChk('setNoise', 'noise');
-  bindChk('setAgc', 'agc');
 
-  if (document.getElementById('applyRecoverCodeBtn')) {
-    document.getElementById('applyRecoverCodeBtn').onclick = () => {
-      const c = document.getElementById('recoverCodeInput').value.trim().toUpperCase();
-      if (c.length === 4) setState({ pulse_my_code: c }, () => { initPeerNetwork(); alert('Code restored!'); });
-    };
-  }
-
-  if (document.getElementById('logoutSessionBtn')) {
-    document.getElementById('logoutSessionBtn').onclick = () => {
-      if (confirm('Clear local session and reload?')) {
-        localStorage.clear();
-        window.location.reload();
-      }
-    };
-  }
-
-  if (document.getElementById('testMicBtn')) {
-    document.getElementById('testMicBtn').onclick = () => {
-      const status = document.getElementById('micTestStatus');
-      status.textContent = 'Requesting microphone access...';
-      getMediaStreamWithFallback((stream) => {
-        status.textContent = '✅ Microphone working! Audio stream active.';
-        status.style.color = '#10b981';
-        stream.getTracks().forEach(t => t.stop());
-      });
-    };
-  }
-
-  if (document.getElementById('wsCallBtn')) {
-    document.getElementById('wsCallBtn').onclick = () => {
-      if (!activeTarget || activeTarget.type !== 'dm') return;
-      playSound(callingAudio);
-      getMediaStreamWithFallback((stream) => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        document.getElementById('mediaArea').style.display = 'flex';
-        const call = peer.call(`pulse-ws-${activeTarget.id}`, stream);
-        currentCall = call;
-        call.on('stream', (rem) => { stopCallAudio(); document.getElementById('remoteVideo').srcObject = rem; });
-        call.on('close', endActiveCall);
-      });
-    };
-  }
-
-  if (document.getElementById('acceptCallBtn')) {
-    document.getElementById('acceptCallBtn').onclick = () => {
-      stopCallAudio();
-      document.getElementById('callModal').style.display = 'none';
-      if (!currentCall) return;
-      getMediaStreamWithFallback((stream) => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        document.getElementById('mediaArea').style.display = 'flex';
-        currentCall.answer(stream);
-        currentCall.on('stream', (rem) => { document.getElementById('remoteVideo').srcObject = rem; });
-        currentCall.on('close', endActiveCall);
-      });
-    };
-  }
-
-  if (document.getElementById('declineCallBtn')) document.getElementById('declineCallBtn').onclick = () => { stopCallAudio(); document.getElementById('callModal').style.display = 'none'; if (currentCall) currentCall.close(); };
-  if (document.getElementById('endCallBtn')) document.getElementById('endCallBtn').onclick = endActiveCall;
-  if (document.getElementById('shareScreenBtn')) document.getElementById('shareScreenBtn').onclick = toggleScreenShare;
-
-  if (document.getElementById('muteMicBtn')) {
-    document.getElementById('muteMicBtn').onclick = (e) => {
-      isMuted = !isMuted;
-      if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-      e.target.textContent = isMuted ? '🔇 Unmute' : '🎙️ Mute';
-    };
-  }
-
-  if (document.getElementById('quickJoinBtn')) document.getElementById('quickJoinBtn').onclick = promptAddFriend;
-  if (document.getElementById('msgInput')) {
-    document.getElementById('msgInput').onkeydown = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); }
-    };
-  }
-}
-
-function endActiveCall() {
-  stopCallAudio();
-  stopScreenShare();
-  document.getElementById('mediaArea').style.display = 'none';
-  if (localStream) localStream.getTracks().forEach(t => t.stop());
-  if (currentCall) currentCall.close();
+  // Close Modals
+  const closeMap = {
+    closeSettingsBtn: 'settingsOverlay',
+    closeGroupSettingsBtn: 'groupSettingsOverlay',
+    closeGroupMemberModal: 'groupMemberModal',
+    closeEmojiStickerModal: 'emojiStickerModal',
+    closeStickerMakerModal: 'stickerMakerModal',
+    closeWhiteboardModal: 'whiteboardModal',
+    closeFriendInfoModal: 'friendInfoModal',
+    closeInfoListModal: 'infoListModal'
+  };
+  Object.entries(closeMap).forEach(([btnId, modalId]) => {
+    document.getElementById(btnId)?.addEventListener('click', () => { document.getElementById(modalId).style.display = 'none'; });
+  });
 }
 
 function setActiveRail(btn, title, actionText, actionFn) {
@@ -1946,45 +2213,129 @@ function setActiveRail(btn, title, actionText, actionFn) {
   scheduleRefresh(true);
 }
 
-function addFriendByCode(code, name) {
-  const cleanCode = code.trim().toUpperCase();
-  getState(['pulse_friends', 'pulse_blocked'], (res) => {
+function openGroupMemberAdder() {
+  if (!activeTarget || activeTarget.type !== 'group') return;
+  getState(['pulse_friends', 'pulse_groups'], (res) => {
     const friends = res.pulse_friends || [];
-    const blocked = (res.pulse_blocked || []).filter(b => b !== cleanCode);
-    if (!friends.some(f => f.code === cleanCode)) {
-      friends.push({ code: cleanCode, name });
-      setState({ pulse_friends: friends, pulse_blocked: blocked }, () => { connectToCode(cleanCode); scheduleRefresh(true); });
-    }
+    const groups = res.pulse_groups || [];
+    const grp = groups.find(g => g.id === activeTarget.id);
+    const list = document.getElementById('groupFriendPickerList');
+    list.innerHTML = '';
+    friends.forEach(f => {
+      const added = (grp?.members || []).includes(f.code);
+      const row = document.createElement('div');
+      row.className = 'list-card';
+      row.innerHTML = `<span><strong>${f.name}</strong> (${f.code})</span><button class="${added ? 'btn-sec' : 'btn-success'}" ${added ? 'disabled' : ''}>${added ? '✓ Added' : '+ Add'}</button>`;
+      if (!added) {
+        row.querySelector('button').onclick = () => {
+          grp.members.push(f.code);
+          activeTarget.members = grp.members;
+          setState({ pulse_groups: groups }, () => {
+            grp.members.forEach(mc => { if (mc !== myCode) sendPayloadToCode(mc, { type: 'GROUP_INVITE_SYNC', group: grp }); });
+            openGroupMemberAdder();
+            scheduleRefresh(true);
+          });
+        };
+      }
+      list.appendChild(row);
+    });
+    document.getElementById('groupMemberModal').style.display = 'flex';
+  });
+}
+
+function openGroupSettingsDrawer() {
+  if (!activeTarget || activeTarget.type !== 'group') return;
+  getState(['pulse_groups'], (res) => {
+    const groups = res.pulse_groups || [];
+    const grp = groups.find(g => g.id === activeTarget.id);
+    if (!grp) return;
+
+    document.getElementById('grpDrawerTitle').textContent = `${grp.name.toUpperCase()} — SERVER SETTINGS`;
+    document.getElementById('grpEditName').value = grp.name || '';
+    document.getElementById('grpEditIcon').value = grp.icon || '#';
+    document.getElementById('grpSlowmodeSec').value = grp.slowmodeSec || 0;
+    document.getElementById('grpWelcomeMsg').value = grp.welcomeMsg || '';
+    document.getElementById('grpAutoModWords').value = (grp.autoModWords || []).join(', ');
+    document.getElementById('grpNotifOverride').value = grp.notifOverride || 'all';
+
+    const boosts = grp.boosts || 0;
+    const bInfo = getGroupBoostLevel(boosts);
+    document.getElementById('grpBoostSummaryTitle').textContent = `Server Level ${bInfo.level} (${boosts} Boosts)`;
+
+    const chList = document.getElementById('grpChannelsList');
+    chList.innerHTML = '';
+    (grp.channels || [{ id: 'general', name: 'general', type: 'text' }]).forEach((ch, idx) => {
+      const r = document.createElement('div');
+      r.className = 'setting-row';
+      r.innerHTML = `<span>#${ch.name} (${ch.type})</span>${idx > 0 ? `<button class="btn-danger" style="padding:3px 7px;">Delete</button>` : ''}`;
+      r.querySelector('button')?.addEventListener('click', () => {
+        grp.channels.splice(idx, 1);
+        setState({ pulse_groups: groups }, () => { openGroupSettingsDrawer(); scheduleRefresh(true); });
+      });
+      chList.appendChild(r);
+    });
+
+    const rolesList = document.getElementById('grpRolesList');
+    rolesList.innerHTML = '';
+    (grp.roles || []).forEach((role, idx) => {
+      const r = document.createElement('div');
+      r.className = 'setting-row';
+      r.innerHTML = `<span style="color:${role.color}; font-weight:800;">● ${role.name} (${role.perm})</span><button class="btn-danger" style="padding:3px 7px;">Delete</button>`;
+      r.querySelector('button').onclick = () => {
+        grp.roles.splice(idx, 1);
+        setState({ pulse_groups: groups }, openGroupSettingsDrawer);
+      };
+      rolesList.appendChild(r);
+    });
+
+    const memList = document.getElementById('grpMemberManageList');
+    memList.innerHTML = '';
+    (grp.members || []).forEach(mc => {
+      const r = document.createElement('div');
+      r.className = 'setting-row';
+      r.innerHTML = `<span><strong>${mc}</strong></span>${mc !== myCode ? `<button class="btn-danger" style="padding:3px 7px;">Kick</button>` : '<span>You</span>'}`;
+      r.querySelector('button')?.addEventListener('click', () => {
+        grp.members = grp.members.filter(m => m !== mc);
+        setState({ pulse_groups: groups }, () => { openGroupSettingsDrawer(); scheduleRefresh(true); });
+      });
+      memList.appendChild(r);
+    });
+
+    document.getElementById('groupSettingsOverlay').style.display = 'flex';
   });
 }
 
 function promptAddFriend() {
   const code = prompt('Enter friend\'s 4-Digit Peer Code:');
   if (!code) return;
-  const cleanCode = code.trim().toUpperCase();
-  const name = prompt(`Nickname for ${cleanCode}:`) || cleanCode;
-  addFriendByCode(cleanCode, name);
+  const clean = code.trim().toUpperCase();
+  const name = prompt(`Nickname for ${clean}:`) || clean;
+  getState(['pulse_friends', 'pulse_blocked'], (res) => {
+    const friends = res.pulse_friends || [];
+    const blocked = (res.pulse_blocked || []).filter(b => b !== clean);
+    if (!friends.some(f => f.code === clean)) {
+      friends.push({ code: clean, name });
+      setState({ pulse_friends: friends, pulse_blocked: blocked }, () => { connectToCode(clean); scheduleRefresh(true); });
+    }
+  });
 }
 
 function promptCreateGroup() {
+  const name = prompt('Enter New Group Server Name:');
+  if (!name) return;
+  const newGrp = {
+    id: 'grp-' + Date.now(),
+    name: name.trim(),
+    members: [myCode],
+    admin: myCode,
+    boosts: 0,
+    channels: [{ id: 'general', name: 'general', type: 'text' }],
+    roles: [{ name: 'Owner', color: '#f59e0b', perm: 'admin' }]
+  };
   getState(['pulse_groups'], (res) => {
-    const groupName = prompt('Enter New Group Server Name:');
-    if (!groupName) return;
-    const newGroup = {
-      id: 'grp-' + Date.now(),
-      name: groupName.trim(),
-      members: [myCode],
-      admin: myCode,
-      boosts: 0,
-      roles: [{ name: 'Admin', color: '#f59e0b' }],
-      auditLog: [{ time: Date.now(), actor: myCode, text: 'created the server' }]
-    };
     const groups = res.pulse_groups || [];
-    groups.push(newGroup);
-    activeTarget = { type: 'group', id: newGroup.id, name: newGroup.name, members: newGroup.members, admin: myCode };
-    setState({ pulse_groups: groups }, () => {
-      scheduleRefresh(true);
-      openGroupMemberAdder();
-    });
+    groups.push(newGrp);
+    activeTarget = { type: 'group', id: newGrp.id, name: newGrp.name, members: newGrp.members, admin: myCode };
+    setState({ pulse_groups: groups }, () => { scheduleRefresh(true); openGroupMemberAdder(); });
   });
 }
